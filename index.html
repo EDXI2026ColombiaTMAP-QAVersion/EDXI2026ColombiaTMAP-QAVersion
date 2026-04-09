@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DXI Timing Map</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <h1>DXI Timing Map</h1>
+      <p>30-minute slots | 7:00 - 17:00</p>
+    </header>
+
+    <aside id="legendPanel" class="panel legend-panel">
+      <div class="legend-header">
+        <h2 style="font-size: 1.2em;">Brand Palette</h2>
+        <button id="toggleLegendBtn" type="button" aria-expanded="true">Collapse</button>
+      </div>
+      <div class="legend-body">
+        <div class="palette-actions">
+          <button id="eraserBtn" type="button">Eraser</button>
+          <button id="addBrandBtn" type="button">Add Brand</button>
+        </div>
+        <div id="brandPalette" class="brand-palette"></div>
+      </div>
+    </aside>
+
+    <main id="layoutMain" class="layout">
+      <section class="panel scheduler-panel">
+        <h2>Timing Map - Apr 2026</h2>
+
+        <div id="monthTabs" class="month-tabs"></div>
+
+        <div class="toolbar">
+          <button id="clearMonthBtn" type="button">Clear Full Month</button>
+          <button id="addMemberBtn" type="button">Add Team Member</button>
+          <button id="removeMemberBtn" type="button">Remove Team Member</button>
+          <button id="recurringBtn" type="button">Recurring Schedule</button>
+          <button id="exportExcelBtn" type="button">Export Excel</button>
+          <input id="templateFileInput" type="file" accept=".xlsx" hidden />
+        </div>
+
+        <div class="table-wrap">
+          <table id="scheduleTable">
+            <thead id="scheduleHead"></thead>
+            <tbody id="scheduleBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <aside id="totalsPanel" class="panel totals-panel">
+        <div class="totals-header">
+          <h2>Totals</h2>
+          <button id="toggleTotalsBtn" type="button" aria-expanded="true">Collapse</button>
+        </div>
+        <div class="totals-section">
+          <h3 id="brandTotalsTitle">By Brand</h3>
+          <div id="brandTotals"></div>
+        </div>
+        <div class="totals-section">
+          <h3 id="memberTotalsTitle">By Team Member</h3>
+          <div id="memberTotals"></div>
+        </div>
+      </aside>
+    </main>
+
+    <template id="brandTemplate">
+      <label class="brand-item">
+        <input type="radio" name="activeBrand" />
+        <span class="swatch"></span>
+        <span class="brand-name"></span>
+        <button type="button" class="brand-delete" title="Delete brand">&times;</button>
+      </label>
+    </template>
+
+    <!-- Brand Modal (Add / Edit) -->
+    <div id="brandModal" class="modal-overlay" hidden>
+      <div class="modal-box" style="max-width:380px">
+        <h3 id="brandModalTitle">Add Brand</h3>
+
+        <label class="modal-label">Brand Name</label>
+        <input id="brandModalName" type="text" class="modal-select" placeholder="e.g. Coca-Cola" />
+
+        <label class="modal-label">Color</label>
+        <div style="display:flex;align-items:center;gap:10px">
+          <input id="brandModalColor" type="color" value="#1D3557" style="width:50px;height:36px;padding:0;border:1px solid #ccc;border-radius:4px;cursor:pointer" />
+          <span id="brandModalHex" style="font-family:monospace;font-size:13px;color:#555">#1D3557</span>
+        </div>
+
+        <div class="modal-actions">
+          <button id="brandModalCancel" type="button" class="btn-secondary">Cancel</button>
+          <button id="brandModalSave" type="button" class="btn-primary">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recurring Schedule Modal -->
+    <div id="recurringModal" class="modal-overlay" hidden>
+      <div class="modal-box">
+        <h3>Recurring Schedule</h3>
+        <p class="modal-desc">Fill the same brand &amp; time range across multiple days.</p>
+
+        <label class="modal-label">Team Member</label>
+        <select id="recMember" class="modal-select"></select>
+
+        <label class="modal-label">Brand</label>
+        <select id="recBrand" class="modal-select"></select>
+
+        <label class="modal-label">Start Time</label>
+        <select id="recStart" class="modal-select"></select>
+
+        <label class="modal-label">End Time</label>
+        <select id="recEnd" class="modal-select"></select>
+
+        <label class="modal-label">Apply to</label>
+        <select id="recScope" class="modal-select">
+          <option value="month">Every weekday of current month</option>
+          <option value="monToFri">Mon–Fri of selected week</option>
+          <option value="pick">Pick specific days</option>
+        </select>
+
+        <div id="recWeekPicker" class="modal-field" hidden>
+          <label class="modal-label">Week</label>
+          <select id="recWeek" class="modal-select"></select>
+        </div>
+
+        <div id="recDayPicker" class="modal-field" hidden>
+          <label class="modal-label">Select days</label>
+          <div id="recDays" class="rec-days-grid"></div>
+        </div>
+
+        <div class="modal-actions">
+          <button id="recCancel" type="button" class="btn-secondary">Cancel</button>
+          <button id="recApply" type="button" class="btn-primary">Apply</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="./sync-sheets.js?v=29"></script>
+    <script src="./template-data.js?v=2"></script>
+    <script src="https://unpkg.com/xlsx-populate/browser/xlsx-populate.min.js"></script>
+    <script src="./app.js?v=38"></script>
+    
+    <script>
+      // Configure Google Sheets sync
+      configureSheetSync(
+        "AIzaSyBUgZjY_u81ZjRt3Nr4u3wVxnuBh2rpnbo",
+        "https://script.google.com/macros/s/AKfycbwLlykjIcWCR-3G5vH73RLlWLDp-bY3PXMZBNENTmNj88cpgEcEw-Al3ma6HfInulxbMg/exec"
+      );
+    </script>
+  </body>
+</html>
