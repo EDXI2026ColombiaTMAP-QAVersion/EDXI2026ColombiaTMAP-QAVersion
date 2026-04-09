@@ -1,5 +1,5 @@
 // Google Apps Script endpoint
-const GOOGLE_SHEETS_API = 'https://script.google.com/macros/s/AKfycbzTm3qGDLusQErS0w-XwwTw2NBqrv5XfCk44KOr_V1_1Wlyv05aZOzN7wbFhacWwMVuDQ/exec';
+const GOOGLE_SHEETS_API = 'https://script.google.com/macros/s/AKfycbzsTwPowLWANe4c1OkV3KtDA2zdpDb9PTIPSA547j2ASZE_M4GRm_dXrPtX-WU4cc9dwQ/exec';
 
 // Load COMPLETE data from Google Sheets - members, brands, and schedule
 async function loadCompleteDataFromSheets(retries = 3) {
