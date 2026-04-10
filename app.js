@@ -298,7 +298,7 @@ function createInitialState(defaultMembers, defaultBrands, PRELOADED) {
       let row = Array.from({ length: slots.length }, (_, i) => (lunchSlots.has(i) ? "LUNCH" : null));
       if (PRELOADED?.assignments?.[day.key]?.[member]) {
         const pre = PRELOADED.assignments[day.key][member];
-        row = pre.map((v, i) => (lunchSlots.has(i) ? "LUNCH" : v || null));
+        row = pre.map((v) => v || null);
       }
       assignments[day.key][member] = row;
     }
@@ -317,7 +317,7 @@ function loadStateFromStorage(defaultBrands) {
       parsed.assignments[day.key] ||= {};
       for (const member of parsed.members) {
         parsed.assignments[day.key][member] ||= Array.from({ length: slots.length }, () => null);
-        for (const slot of slots) if (slot.isLunch) parsed.assignments[day.key][member][slot.index] = "LUNCH";
+        // lunch position is stored in the data — do not force override
       }
     }
     return parsed;
@@ -347,7 +347,7 @@ function mergeSheetIntoState(state, PRELOADED, defaultMembers) {
       if (!state.members.includes(member)) continue; // skip deleted members
       const pre = sheetDay[member];
       if (Array.isArray(pre)) {
-        state.assignments[dayKey][member] = pre.map((v, i) => (lunchSlots.has(i) ? "LUNCH" : v || null));
+        state.assignments[dayKey][member] = pre.map((v) => v || null);
       }
     }
   }
@@ -503,7 +503,7 @@ function renderTable() {
             td.style.cursor = "not-allowed";
             td.title = `Holiday: ${COLOMBIAN_HOLIDAYS[day.key]}`;
             td.textContent = "";
-          } else if (slot.isLunch) {
+          } else if (state.assignments[day.key][member][slot.index] === "LUNCH") {
             td.classList.add("lunch");
             td.textContent = "L";
           } else {
@@ -764,6 +764,42 @@ function attachEvents() {
       _lastPaintSyncPromise = null;
     }
   });
+
+  // ── Right-click to toggle Lunch per member per slot ──────────────────────
+  const lunchMenu = document.getElementById("lunchContextMenu");
+  const lunchToggle = document.getElementById("lunchContextToggle");
+  let _lunchCtx = null; // { member, dayKey, slotIndex, cell }
+
+  scheduleBody.addEventListener("contextmenu", (event) => {
+    const cell = event.target.closest(".slot-cell");
+    if (!cell || cell.classList.contains("foreign") || cell.classList.contains("holiday")) return;
+    event.preventDefault();
+    const member = cell.dataset.member;
+    const dayKey = cell.dataset.day;
+    const slotIndex = Number(cell.dataset.slot);
+    const isLunchNow = state.assignments[dayKey][member][slotIndex] === "LUNCH";
+    lunchToggle.textContent = isLunchNow ? "Remove Lunch (work here)" : "Set as Lunch";
+    _lunchCtx = { member, dayKey, slotIndex, cell };
+    lunchMenu.style.display = "block";
+    lunchMenu.style.left = event.clientX + "px";
+    lunchMenu.style.top = event.clientY + "px";
+  });
+
+  lunchToggle.addEventListener("click", async () => {
+    lunchMenu.style.display = "none";
+    if (!_lunchCtx) return;
+    const { member, dayKey, slotIndex } = _lunchCtx;
+    _lunchCtx = null;
+    const isLunchNow = state.assignments[dayKey][member][slotIndex] === "LUNCH";
+    state.assignments[dayKey][member][slotIndex] = isLunchNow ? null : "LUNCH";
+    renderTable();
+    renderTotals();
+    const ok = await saveState(dayKey);
+    showToast(ok ? "Changes synced" : "⚠️ No se pudo guardar, intenta de nuevo", ok ? "success" : "error");
+  });
+
+  document.addEventListener("click", () => { lunchMenu.style.display = "none"; _lunchCtx = null; });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") { lunchMenu.style.display = "none"; _lunchCtx = null; } });
 }
 
 async function exportScheduleToNewExcel() {
