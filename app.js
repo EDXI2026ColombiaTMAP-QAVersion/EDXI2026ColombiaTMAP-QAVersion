@@ -890,23 +890,35 @@ async function importFromJson(data) {
     return;
   }
 
+  // Normalize a string: remove accents, trim, lowercase
+  function normalize(str) {
+    return str
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim()
+      .toLowerCase();
+  }
+
   // Build a resolver: JSON brand string → existing app brand ID
-  // Strategy: 1) exact name match  2) strip parenthetical suffix (e.g. " (MONTHLY)")
-  //           and find first app brand whose name contains the base word(s)
+  // Strategy: 1) exact match  2) normalized match  3) strip suffix then contains
   function resolveJsonBrand(jsonName) {
-    // 1. Exact match
-    const exact = state.brands.find(
-      (b) => b.name.trim().toLowerCase() === jsonName.trim().toLowerCase()
-    );
+    const normJson = normalize(jsonName);
+    // 1. Exact (case-insensitive, accent-insensitive)
+    const exact = state.brands.find((b) => normalize(b.name) === normJson);
     if (exact) return exact.id;
     // 2. Strip suffix like " (DAILY)", " (MONTHLY)", " (WEEKLY)" etc.
-    const base = jsonName.replace(/\s*\([^)]*\)\s*$/, "").trim().toLowerCase();
+    const base = normJson.replace(/\s*\([^)]*\)\s*$/, "").trim();
     if (!base) return null;
-    // 3. First app brand whose name contains the base string
-    const fuzzy = state.brands.find((b) =>
-      b.name.toLowerCase().includes(base)
-    );
+    // 3. First app brand whose normalized name contains the base string
+    const fuzzy = state.brands.find((b) => normalize(b.name).includes(base));
     return fuzzy ? fuzzy.id : null;
+  }
+
+  // Build a resolver: JSON member name → app member name (exact string used in state)
+  // Handles accent/encoding differences between Excel and the app
+  function resolveJsonMember(jsonName) {
+    const normJson = normalize(jsonName);
+    return state.members.find((m) => normalize(m) === normJson) || null;
   }
 
   // Import assignments — only for existing members, only for existing brands
@@ -915,14 +927,15 @@ async function importFromJson(data) {
   for (const [dateKey, memberMap] of Object.entries(data.assignments)) {
     if (!state.assignments[dateKey]) continue; // date not in current year range, skip
     for (const [memberName, slotsArr] of Object.entries(memberMap)) {
-      if (!state.members.includes(memberName)) continue; // skip unknown members
-      state.assignments[dateKey][memberName] ||= slots.map(() => null);
+      const appMember = resolveJsonMember(memberName);
+      if (!appMember) continue; // skip unknown members
+      state.assignments[dateKey][appMember] ||= slots.map(() => null);
       for (let i = 0; i < slotsArr.length && i < slots.length; i++) {
         const val = slotsArr[i];
         if (!val) continue;
         const brandId = resolveJsonBrand(val);
         if (!brandId) continue; // no matching brand in app — skip
-        state.assignments[dateKey][memberName][i] = brandId;
+        state.assignments[dateKey][appMember][i] = brandId;
       }
     }
     if (!changedDays.includes(dateKey)) changedDays.push(dateKey);
