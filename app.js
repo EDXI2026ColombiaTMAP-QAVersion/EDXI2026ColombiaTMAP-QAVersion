@@ -890,9 +890,24 @@ async function importFromJson(data) {
     return;
   }
 
-  // Build brand name → ID map from EXISTING brands only (no new brands created)
-  const brandNameToId = {};
-  for (const b of state.brands) brandNameToId[b.name] = b.id;
+  // Build a resolver: JSON brand string → existing app brand ID
+  // Strategy: 1) exact name match  2) strip parenthetical suffix (e.g. " (MONTHLY)")
+  //           and find first app brand whose name contains the base word(s)
+  function resolveJsonBrand(jsonName) {
+    // 1. Exact match
+    const exact = state.brands.find(
+      (b) => b.name.trim().toLowerCase() === jsonName.trim().toLowerCase()
+    );
+    if (exact) return exact.id;
+    // 2. Strip suffix like " (DAILY)", " (MONTHLY)", " (WEEKLY)" etc.
+    const base = jsonName.replace(/\s*\([^)]*\)\s*$/, "").trim().toLowerCase();
+    if (!base) return null;
+    // 3. First app brand whose name contains the base string
+    const fuzzy = state.brands.find((b) =>
+      b.name.toLowerCase().includes(base)
+    );
+    return fuzzy ? fuzzy.id : null;
+  }
 
   // Import assignments — only for existing members, only for existing brands
   let daysImported = 0;
@@ -905,8 +920,8 @@ async function importFromJson(data) {
       for (let i = 0; i < slotsArr.length && i < slots.length; i++) {
         const val = slotsArr[i];
         if (!val) continue;
-        const brandId = brandNameToId[val];
-        if (!brandId) continue; // skip unknown brands
+        const brandId = resolveJsonBrand(val);
+        if (!brandId) continue; // no matching brand in app — skip
         state.assignments[dateKey][memberName][i] = brandId;
       }
     }
