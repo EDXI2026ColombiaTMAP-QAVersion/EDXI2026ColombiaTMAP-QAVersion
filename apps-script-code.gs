@@ -2,10 +2,18 @@ const SPREADSHEET_ID = '1aZQlQdszET32S_pM8et-L_T0tA6CZ-4uFKPuCWz3Vxo';
 const SHEET_NAME = 'assignments';
 
 function doGet(e) {
-  const action = e.parameter.action;
-  
+  const lock = LockService.getDocumentLock();
+  lock.waitLock(30000);
   try {
-    if (action === 'debugSheets') {
+    const action = e.parameter.action;
+
+    if (action === "saveAllChunk") {
+      return saveAllChunk(e);
+    } else if (action === "saveDayData") {
+      const day = e.parameter.day;
+      const data = JSON.parse(e.parameter.data);
+      return saveDayData(day, data);
+    } else if (action === 'debugSheets') {
       return debugSheets();
     } else if (action === 'initData') {
       return initializeData();
@@ -18,7 +26,9 @@ function doGet(e) {
     }
     return ContentService.createTextOutput(JSON.stringify({error: 'Invalid action'})).setMimeType(ContentService.MimeType.JSON);
   } catch (error) {
-    return ContentService.createTextOutput(JSON.stringify({error: error.toString()})).setMimeType(ContentService.MimeType.JSON);
+    return ContentService.createTextOutput(JSON.stringify({success: false, error: error.toString()})).setMimeType(ContentService.MimeType.JSON);
+  } finally {
+    lock.releaseLock();
   }
 }
 
@@ -215,5 +225,71 @@ function initializeData() {
   } catch (error) {
     Logger.log('❌ Error initializing data: ' + error);
     return ContentService.createTextOutput(JSON.stringify({error: error.toString()})).setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+// ============= SAVE ALL CHUNK (chunked GET-based save) =============
+function saveAllChunk(e) {
+  const chunk  = parseInt(e.parameter.chunk)  || 0;
+  const total  = parseInt(e.parameter.total)  || 1;
+  const data   = e.parameter.data   || '';
+  const batch  = e.parameter.batch  || 'default';
+
+  const lock = LockService.getScriptLock();
+  try { lock.waitLock(30000); }
+  catch(err) {
+    return ContentService.createTextOutput(JSON.stringify({success:false, error:'Lock timeout'}))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
+  try {
+    const props = PropertiesService.getScriptProperties();
+    props.setProperty('sb_' + batch + '_' + chunk, data);
+
+    if (chunk === total - 1) {
+      let assembled = '';
+      for (let i = 0; i < total; i++) {
+        assembled += props.getProperty('sb_' + batch + '_' + i) || '';
+      }
+      for (let i = 0; i < total; i++) {
+        props.deleteProperty('sb_' + batch + '_' + i);
+      }
+
+      const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+      const sheet = ss.getSheetByName(SHEET_NAME);
+      sheet.getRange('A1').setValue(assembled);
+      SpreadsheetApp.flush();
+
+      return ContentService.createTextOutput(JSON.stringify({success:true, saved:true, length:assembled.length}))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    return ContentService.createTextOutput(JSON.stringify({success:true, saved:false, chunk:chunk}))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch(err) {
+    return ContentService.createTextOutput(JSON.stringify({success:false, error:err.toString()}))
+      .setMimeType(ContentService.MimeType.JSON);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ============= SAVE DAY DATA =============
+function saveDayData(day, data) {
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const sheet = ss.getSheetByName(SHEET_NAME);
+    const cell = sheet.getRange("A1");
+    let fullData = {};
+    if (cell.getValue()) {
+      try { fullData = JSON.parse(cell.getValue()); } catch (e) { fullData = {}; }
+    }
+    if (!fullData.assignments) fullData.assignments = {};
+    fullData.assignments[day] = data;
+    cell.setValue(JSON.stringify(fullData));
+    SpreadsheetApp.flush();
+    return ContentService.createTextOutput(JSON.stringify({success: true})).setMimeType(ContentService.MimeType.JSON);
+  } catch (error) {
+    return ContentService.createTextOutput(JSON.stringify({success: false, error: error.toString()})).setMimeType(ContentService.MimeType.JSON);
   }
 }
