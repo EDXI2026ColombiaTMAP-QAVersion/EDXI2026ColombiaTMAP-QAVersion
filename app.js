@@ -540,7 +540,7 @@ function renderTable() {
             td.classList.add("lunch");
             td.textContent = "L";
           } else {
-            paintCell(td, state.assignments[day.key][member][slot.index]);
+            paintCell(td, state.assignments[day.key][member][slot.index], slot.index);
           }
           tr.appendChild(td);
         }
@@ -560,10 +560,12 @@ function compactSlotLabel(slot) {
   return slot.minute === 0 ? String(slot.hour) : `${slot.hour}.5`;
 }
 
-function paintCell(cell, value) {
+function paintCell(cell, value, slotIndex) {
   if (cell.classList.contains("lunch")) return;
   if (!value) {
-    cell.style.background = "#ffffff";
+    // slot 0 and 1 are 7:00 and 7:30 (early morning) - use light gray
+    const bgColor = (slotIndex === 0 || slotIndex === 1) ? "#d9d9d9" : "#ffffff";
+    cell.style.background = bgColor;
     cell.title = "";
     return;
   }
@@ -813,7 +815,7 @@ function attachEvents() {
     const dayKey = cell.dataset.day;
     const slotIndex = Number(cell.dataset.slot);
     applyToCell(member, dayKey, slotIndex);
-    paintCell(cell, state.assignments[dayKey][member][slotIndex]);
+    paintCell(cell, state.assignments[dayKey][member][slotIndex], slotIndex);
     renderTotals();
   });
 
@@ -825,7 +827,7 @@ function attachEvents() {
     const dayKey = cell.dataset.day;
     const slotIndex = Number(cell.dataset.slot);
     applyToCell(member, dayKey, slotIndex);
-    paintCell(cell, state.assignments[dayKey][member][slotIndex]);
+    paintCell(cell, state.assignments[dayKey][member][slotIndex], slotIndex);
   });
 
   scheduleBody.addEventListener("mouseup", async () => {
