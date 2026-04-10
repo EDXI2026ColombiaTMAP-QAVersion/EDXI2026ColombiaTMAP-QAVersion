@@ -427,6 +427,11 @@ function renderPalette() {
       saveState();
     });
     node.addEventListener("dblclick", () => editBrand(brand.id));
+    node.querySelector(".brand-edit").addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      editBrand(brand.id);
+    });
     node.querySelector(".brand-delete").addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();

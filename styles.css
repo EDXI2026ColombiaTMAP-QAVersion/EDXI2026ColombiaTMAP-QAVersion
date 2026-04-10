@@ -237,6 +237,19 @@ button:hover {
   color: var(--danger);
 }
 
+.brand-edit {
+  background: none;
+  border: none;
+  color: #b0b0b0;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+}
+.brand-edit:hover {
+  color: var(--primary, #0E75FF);
+}
+
 .swatch {
   width: 11px;
   height: 11px;
