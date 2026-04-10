@@ -116,6 +116,8 @@ let legendPanel;
 let toggleLegendBtn;
 let brandSearchInput;
 let brandSearchQuery = "";
+let importJsonBtn;
+let importJsonFileInput;
 
 // Brand modal refs
 let brandModal, brandModalTitle, brandModalName, brandModalColor, brandModalHex, brandModalBillingCode, brandModalSave, brandModalCancel;
@@ -154,6 +156,8 @@ function init() {
   removeMemberBtn = document.getElementById("removeMemberBtn");
   addBrandBtn = document.getElementById("addBrandBtn");
   exportExcelBtn = document.getElementById("exportExcelBtn");
+  importJsonBtn = document.getElementById("importJsonBtn");
+  importJsonFileInput = document.getElementById("importJsonFileInput");
   templateFileInput = document.getElementById("templateFileInput");
   recurringBtn = document.getElementById("recurringBtn");
   legendPanel = document.getElementById("legendPanel");
@@ -775,6 +779,23 @@ function attachEvents() {
     await exportScheduleToNewExcel();
   });
 
+  importJsonBtn.addEventListener("click", () => {
+    importJsonFileInput.value = "";
+    importJsonFileInput.click();
+  });
+
+  importJsonFileInput.addEventListener("change", async () => {
+    const file = importJsonFileInput.files[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      await importFromJson(data);
+    } catch (e) {
+      showToast("Error reading file: " + e.message, "error");
+    }
+  });
+
   recurringBtn.addEventListener("click", openRecurringModal);
 
 
@@ -861,6 +882,79 @@ function attachEvents() {
 
   document.addEventListener("click", () => { lunchMenu.style.display = "none"; _lunchCtx = null; });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") { lunchMenu.style.display = "none"; _lunchCtx = null; } });
+}
+
+async function importFromJson(data) {
+  if (!data || !data.members || !data.assignments) {
+    showToast("Invalid import file format", "error");
+    return;
+  }
+
+  // A palette of colors to assign to new brands
+  const colorPalette = [
+    "#2D6A4F","#1D3557","#8F2D56","#CA6702","#6A4C93",
+    "#264653","#386641","#9D4EDD","#E63946","#457B9D",
+    "#2A9D8F","#E9C46A","#F4A261","#E76F51","#6D6875"
+  ];
+  let colorIdx = state.brands.length;
+
+  // 1. Ensure all brands from the JSON exist in state
+  //    data.brands is a list of brand name strings
+  const brandNameToId = {};
+  for (const b of state.brands) brandNameToId[b.name] = b.id;
+
+  for (const brandName of (data.brands || [])) {
+    if (!brandNameToId[brandName]) {
+      const id = `b${Date.now()}_${colorIdx}`;
+      const color = colorPalette[colorIdx % colorPalette.length];
+      state.brands.push({ id, name: brandName, color, billingCode: "" });
+      brandNameToId[brandName] = id;
+      colorIdx++;
+    }
+  }
+
+  // 2. Ensure all members exist in state
+  for (const memberName of data.members) {
+    if (!state.members.includes(memberName)) {
+      state.members.push(memberName);
+      for (const day of allWeekdays) {
+        state.assignments[day.key] ||= {};
+        state.assignments[day.key][memberName] = slots.map((slot) =>
+          slot.isLunch ? "LUNCH" : null
+        );
+      }
+    }
+  }
+
+  // 3. Import assignments — map brand name strings → brand IDs
+  let daysImported = 0;
+  const changedDays = [];
+  for (const [dateKey, memberMap] of Object.entries(data.assignments)) {
+    if (!state.assignments[dateKey]) continue; // date not in current year range, skip
+    for (const [memberName, slotsArr] of Object.entries(memberMap)) {
+      if (!state.members.includes(memberName)) continue;
+      state.assignments[dateKey][memberName] ||= slots.map(() => null);
+      for (let i = 0; i < slotsArr.length && i < slots.length; i++) {
+        const val = slotsArr[i];
+        if (!val) continue;
+        const brandId = brandNameToId[val];
+        if (brandId) state.assignments[dateKey][memberName][i] = brandId;
+      }
+    }
+    if (!changedDays.includes(dateKey)) changedDays.push(dateKey);
+    daysImported++;
+  }
+
+  renderPalette();
+  renderTable();
+  renderTotals();
+  const ok = await saveState(changedDays);
+  showToast(
+    ok
+      ? `Imported ${data.members.length} members, ${(data.brands||[]).length} brands, ${daysImported} days`
+      : "⚠️ Import done locally but sync failed — try saving again",
+    ok ? "success" : "error"
+  );
 }
 
 async function exportScheduleToNewExcel() {

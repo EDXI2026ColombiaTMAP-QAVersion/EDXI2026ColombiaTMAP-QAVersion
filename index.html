@@ -40,6 +40,8 @@
           <button id="removeMemberBtn" type="button">Remove Team Member</button>
           <button id="recurringBtn" type="button">Recurring Schedule</button>
           <button id="exportExcelBtn" type="button">Export Excel</button>
+          <button id="importJsonBtn" type="button">Import Excel Data</button>
+          <input id="importJsonFileInput" type="file" accept=".json" hidden />
           <input id="templateFileInput" type="file" accept=".xlsx" hidden />
         </div>
 
@@ -180,7 +182,7 @@
     <script src="./sync-sheets.js?v=30"></script>
     <script src="./template-data.js?v=2"></script>
     <script src="https://unpkg.com/xlsx-populate/browser/xlsx-populate.min.js"></script>
-    <script src="./app.js?v=46"></script>
+    <script src="./app.js?v=47"></script>
     
     <script>
       // Configure Google Sheets sync
