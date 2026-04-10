@@ -890,55 +890,24 @@ async function importFromJson(data) {
     return;
   }
 
-  // A palette of colors to assign to new brands
-  const colorPalette = [
-    "#2D6A4F","#1D3557","#8F2D56","#CA6702","#6A4C93",
-    "#264653","#386641","#9D4EDD","#E63946","#457B9D",
-    "#2A9D8F","#E9C46A","#F4A261","#E76F51","#6D6875"
-  ];
-  let colorIdx = state.brands.length;
-
-  // 1. Ensure all brands from the JSON exist in state
-  //    data.brands is a list of brand name strings
+  // Build brand name → ID map from EXISTING brands only (no new brands created)
   const brandNameToId = {};
   for (const b of state.brands) brandNameToId[b.name] = b.id;
 
-  for (const brandName of (data.brands || [])) {
-    if (!brandNameToId[brandName]) {
-      const id = `b${Date.now()}_${colorIdx}`;
-      const color = colorPalette[colorIdx % colorPalette.length];
-      state.brands.push({ id, name: brandName, color, billingCode: "" });
-      brandNameToId[brandName] = id;
-      colorIdx++;
-    }
-  }
-
-  // 2. Ensure all members exist in state
-  for (const memberName of data.members) {
-    if (!state.members.includes(memberName)) {
-      state.members.push(memberName);
-      for (const day of allWeekdays) {
-        state.assignments[day.key] ||= {};
-        state.assignments[day.key][memberName] = slots.map((slot) =>
-          slot.isLunch ? "LUNCH" : null
-        );
-      }
-    }
-  }
-
-  // 3. Import assignments — map brand name strings → brand IDs
+  // Import assignments — only for existing members, only for existing brands
   let daysImported = 0;
   const changedDays = [];
   for (const [dateKey, memberMap] of Object.entries(data.assignments)) {
     if (!state.assignments[dateKey]) continue; // date not in current year range, skip
     for (const [memberName, slotsArr] of Object.entries(memberMap)) {
-      if (!state.members.includes(memberName)) continue;
+      if (!state.members.includes(memberName)) continue; // skip unknown members
       state.assignments[dateKey][memberName] ||= slots.map(() => null);
       for (let i = 0; i < slotsArr.length && i < slots.length; i++) {
         const val = slotsArr[i];
         if (!val) continue;
         const brandId = brandNameToId[val];
-        if (brandId) state.assignments[dateKey][memberName][i] = brandId;
+        if (!brandId) continue; // skip unknown brands
+        state.assignments[dateKey][memberName][i] = brandId;
       }
     }
     if (!changedDays.includes(dateKey)) changedDays.push(dateKey);
@@ -951,7 +920,7 @@ async function importFromJson(data) {
   const ok = await saveState(changedDays);
   showToast(
     ok
-      ? `Imported ${data.members.length} members, ${(data.brands||[]).length} brands, ${daysImported} days`
+      ? `Imported ${daysImported} days of assignments`
       : "⚠️ Import done locally but sync failed — try saving again",
     ok ? "success" : "error"
   );
