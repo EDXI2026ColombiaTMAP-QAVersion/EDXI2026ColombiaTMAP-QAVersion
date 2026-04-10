@@ -21,6 +21,7 @@
         <div class="palette-actions">
           <button id="eraserBtn" type="button">Eraser</button>
           <button id="addBrandBtn" type="button">Add Brand</button>
+          <button id="importBrandsBtn" type="button">Import Brands</button>
         </div>
         <div id="brandPalette" class="brand-palette"></div>
       </div>
@@ -158,6 +159,19 @@
       </div>
     </div>
 
+    <!-- Import Brands Modal -->
+    <div id="importBrandsModal" class="modal-overlay" hidden>
+      <div class="modal-box" style="max-width:600px;">
+        <h3>Import Brands from List</h3>
+        <p style="font-size:0.9em;color:#666;margin-bottom:12px;">Paste the brand list (with SI USAR column). Only "SI USAR" brands will be imported.</p>
+        <textarea id="importBrandsInput" placeholder="Paste brand data here..." style="width:100%;height:300px;padding:8px;border:1px solid #ccc;border-radius:4px;font-family:monospace;font-size:0.85em;"></textarea>
+        <div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end;">
+          <button id="importBrandsCancel" type="button" class="btn-secondary">Cancel</button>
+          <button id="importBrandsOk" type="button" class="btn-primary">Import</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Lunch context menu -->
     <div id="lunchContextMenu" style="display:none;position:fixed;z-index:9999;background:#fff;border:1px solid #ccc;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,0.18);padding:4px 0;min-width:160px;">
       <div id="lunchContextToggle" style="padding:8px 16px;cursor:pointer;font-size:0.92em;white-space:nowrap;">Set as Lunch</div>
@@ -166,7 +180,7 @@
     <script src="./sync-sheets.js?v=30"></script>
     <script src="./template-data.js?v=2"></script>
     <script src="https://unpkg.com/xlsx-populate/browser/xlsx-populate.min.js"></script>
-    <script src="./app.js?v=43"></script>
+    <script src="./app.js?v=44"></script>
     
     <script>
       // Configure Google Sheets sync

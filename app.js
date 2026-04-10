@@ -119,6 +119,9 @@ let toggleLegendBtn;
 let brandModal, brandModalTitle, brandModalName, brandModalColor, brandModalHex, brandModalBillingCode, brandModalSave, brandModalCancel;
 let _brandModalResolve = null;
 
+// Import brands modal refs
+let importBrandsModal, importBrandsInput, importBrandsOk, importBrandsCancel, importBrandsBtn;
+
 // Member modal refs
 let memberModal, memberModalName, memberModalId, memberModalSave, memberModalCancel;
 let _memberModalResolve = null;
@@ -177,6 +180,15 @@ function init() {
   memberModalSave.addEventListener("click", () => { if (_memberModalResolve) _memberModalResolve(true); });
   memberModalCancel.addEventListener("click", () => { if (_memberModalResolve) _memberModalResolve(false); });
   memberModal.addEventListener("click", (e) => { if (e.target === memberModal && _memberModalResolve) _memberModalResolve(false); });
+
+  // Import brands modal
+  importBrandsModal = document.getElementById("importBrandsModal");
+  importBrandsInput = document.getElementById("importBrandsInput");
+  importBrandsOk = document.getElementById("importBrandsOk");
+  importBrandsCancel = document.getElementById("importBrandsCancel");
+  importBrandsBtn = document.getElementById("importBrandsBtn");
+  importBrandsCancel.addEventListener("click", () => { importBrandsModal.hidden = true; });
+  importBrandsModal.addEventListener("click", (e) => { if (e.target === importBrandsModal) importBrandsModal.hidden = true; });
 
   renderMonthTabs();
   updateScheduleTitle();
@@ -706,6 +718,38 @@ function attachEvents() {
     if (ok) showToast(`Brand "${result.name}" added`, "success");
   });
 
+  importBrandsBtn.addEventListener("click", () => {
+    importBrandsInput.value = "";
+    importBrandsModal.hidden = false;
+    importBrandsInput.focus();
+  });
+
+  importBrandsOk.addEventListener("click", () => {
+    const text = importBrandsInput.value.trim();
+    if (!text) {
+      showToast("Paste brand data first", "error");
+      return;
+    }
+    const imported = parseBrandList(text);
+    if (imported.length === 0) {
+      showToast("No 'SI USAR' brands found in pasted data", "error");
+      return;
+    }
+    // Add brands to state
+    let added = 0;
+    for (const brand of imported) {
+      if (!state.brands.find(b => b.name === brand.name)) {
+        const id = `b${Date.now()}_${added}`;
+        state.brands.push({ id, name: brand.name, color: brand.color, billingCode: brand.billingCode });
+        added++;
+      }
+    }
+    importBrandsModal.hidden = true;
+    renderPalette();
+    saveState();
+    showToast(`Imported ${added} brand(s)`, "success");
+  });
+
   exportExcelBtn.addEventListener("click", async () => {
     if (!window.XlsxPopulate) {
       alert("Excel export library did not load. Please check your internet connection and reload.");
@@ -1032,6 +1076,39 @@ async function deleteBrand(brandId) {
   renderTotals();
   const ok = await saveState(affectedDays);
   if (ok) showToast(`Brand "${brand.name}" deleted`, "success");
+}
+
+function parseBrandList(text) {
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  const brands = [];
+  const colorsPicked = new Set();
+
+  for (const line of lines) {
+    const parts = line.split('\t').map(p => p.trim());
+    if (parts.length < 4) continue;
+    
+    // Check if last column contains "SI USAR"
+    const lastCol = parts[parts.length - 1];
+    if (!lastCol.includes("SI USAR")) continue;
+    
+    // Extract brand name (first column) and code (second column)
+    const brandName = parts[0];
+    const code = parts[1] || parts[2]; // Could be in col 2 or 3
+    
+    if (!brandName) continue;
+    
+    // Pick a color from fallback colors (cycle through)
+    const colorIdx = brands.length % fallbackColors.length;
+    const color = fallbackColors[colorIdx];
+    
+    brands.push({
+      name: brandName,
+      color: color,
+      billingCode: code || ""
+    });
+  }
+  
+  return brands;
 }
 
 function openBrandModal(title, name, color, billingCode = "") {
