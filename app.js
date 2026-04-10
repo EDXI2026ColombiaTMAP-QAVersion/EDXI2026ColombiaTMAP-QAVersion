@@ -116,8 +116,12 @@ let legendPanel;
 let toggleLegendBtn;
 
 // Brand modal refs
-let brandModal, brandModalTitle, brandModalName, brandModalColor, brandModalHex, brandModalSave, brandModalCancel;
+let brandModal, brandModalTitle, brandModalName, brandModalColor, brandModalHex, brandModalBillingCode, brandModalSave, brandModalCancel;
 let _brandModalResolve = null;
+
+// Member modal refs
+let memberModal, memberModalName, memberModalId, memberModalSave, memberModalCancel;
+let _memberModalResolve = null;
 
 function init() {
   // Resolve state from Sheet data (now available) + localStorage
@@ -156,12 +160,23 @@ function init() {
   brandModalName = document.getElementById("brandModalName");
   brandModalColor = document.getElementById("brandModalColor");
   brandModalHex = document.getElementById("brandModalHex");
+  brandModalBillingCode = document.getElementById("brandModalBillingCode");
   brandModalSave = document.getElementById("brandModalSave");
   brandModalCancel = document.getElementById("brandModalCancel");
   brandModalColor.addEventListener("input", () => { brandModalHex.textContent = brandModalColor.value.toUpperCase(); });
   brandModalSave.addEventListener("click", () => { if (_brandModalResolve) _brandModalResolve(true); });
   brandModalCancel.addEventListener("click", () => { if (_brandModalResolve) _brandModalResolve(false); });
   brandModal.addEventListener("click", (e) => { if (e.target === brandModal && _brandModalResolve) _brandModalResolve(false); });
+
+  // Member modal
+  memberModal = document.getElementById("memberModal");
+  memberModalName = document.getElementById("memberModalName");
+  memberModalId = document.getElementById("memberModalId");
+  memberModalSave = document.getElementById("memberModalSave");
+  memberModalCancel = document.getElementById("memberModalCancel");
+  memberModalSave.addEventListener("click", () => { if (_memberModalResolve) _memberModalResolve(true); });
+  memberModalCancel.addEventListener("click", () => { if (_memberModalResolve) _memberModalResolve(false); });
+  memberModal.addEventListener("click", (e) => { if (e.target === memberModal && _memberModalResolve) _memberModalResolve(false); });
 
   renderMonthTabs();
   updateScheduleTitle();
@@ -290,7 +305,7 @@ function createInitialState(defaultMembers, defaultBrands, PRELOADED) {
       assignments[day.key][member] = row;
     }
   }
-  return { members: [...defaultMembers], brands: [...defaultBrands], assignments, selectedBrandId: defaultBrands[0]?.id };
+  return { members: [...defaultMembers], brands: [...defaultBrands], assignments, selectedBrandId: defaultBrands[0]?.id, memberDetails: {} };
 }
 
 function loadStateFromStorage(defaultBrands) {
@@ -632,12 +647,15 @@ function attachEvents() {
   });
 
   addMemberBtn.addEventListener("click", async () => {
-    const name = prompt("New team member name:");
-    if (!name || !name.trim()) return;
-    const clean = name.trim();
+    const result = await openMemberModal();
+    if (!result) return;
+    const clean = result.name;
     if (state.members.includes(clean)) {
+      showToast(`Team member "${clean}" already exists`, "error");
       return;
     }
+    if (!state.memberDetails) state.memberDetails = {};
+    state.memberDetails[clean] = { memberId: result.memberId };
     state.members.push(clean);
     const addedDays = [];
     for (const day of allWeekdays) {
@@ -681,7 +699,7 @@ function attachEvents() {
     const result = await openBrandModal("Add Brand", "", "#1D3557");
     if (!result) return;
     const id = `b${Date.now()}`;
-    state.brands.push({ id, name: result.name, color: result.color });
+    state.brands.push({ id, name: result.name, color: result.color, billingCode: result.billingCode });
     selectedBrandId = id;
     paintMode = "brand";
     renderPalette();
@@ -767,16 +785,20 @@ async function exportScheduleToNewExcel() {
     });
 
     sheet.cell("A1").value("Team Member").style("bold", true).style("fill", "D3D3D3");
-    sheet.cell("B1").value("Client").style("bold", true).style("fill", "D3D3D3");
+    sheet.cell("B1").value("Member ID").style("bold", true).style("fill", "D3D3D3");
+    sheet.cell("C1").value("Client").style("bold", true).style("fill", "D3D3D3");
+    sheet.cell("D1").value("Billing Code").style("bold", true).style("fill", "D3D3D3");
     for (let i = 0; i < monthLabels.length; i++) {
-      sheet.cell(1, i + 3).value(`${monthLabels[i]} Hours`).style("bold", true).style("fill", "D3D3D3");
+      sheet.cell(1, i + 5).value(`${monthLabels[i]} Hours`).style("bold", true).style("fill", "D3D3D3");
     }
 
     // Set column widths
     sheet.column("A").width(25);
-    sheet.column("B").width(35);
+    sheet.column("B").width(20);
+    sheet.column("C").width(35);
+    sheet.column("D").width(20);
     for (let i = 0; i < monthLabels.length; i++) {
-      sheet.column(i + 3).width(12);
+      sheet.column(i + 5).width(12);
     }
 
     let rowNum = 2;
@@ -804,7 +826,9 @@ async function exportScheduleToNewExcel() {
       // For each brand this member has
       for (const [brandId, brand] of memberBrands) {
         sheet.cell(`A${rowNum}`).value(member);
-        sheet.cell(`B${rowNum}`).value(brand?.name || "");
+        sheet.cell(`B${rowNum}`).value(state.memberDetails?.[member]?.memberId || "");
+        sheet.cell(`C${rowNum}`).value(brand?.name || "");
+        sheet.cell(`D${rowNum}`).value(brand?.billingCode || "");
 
         // Calculate hours for each month
         for (let mIdx = 0; mIdx < MONTHS.length; mIdx++) {
@@ -822,7 +846,7 @@ async function exportScheduleToNewExcel() {
             }
           }
 
-          sheet.cell(rowNum, mIdx + 3).value(monthHours > 0 ? monthHours : 0);
+          sheet.cell(rowNum, mIdx + 5).value(monthHours > 0 ? monthHours : 0);
         }
 
         rowNum++;
@@ -932,11 +956,12 @@ async function editBrand(brandId) {
   const brand = state.brands.find((b) => b.id === brandId);
   if (!brand) return;
 
-  const result = await openBrandModal("Edit Brand", brand.name, brand.color);
+  const result = await openBrandModal("Edit Brand", brand.name, brand.color, brand.billingCode || "");
   if (!result) return;
 
   brand.name = result.name;
   brand.color = result.color;
+  brand.billingCode = result.billingCode;
   renderPalette();
   renderTable();
   renderTotals();
@@ -975,11 +1000,12 @@ async function deleteBrand(brandId) {
   if (ok) showToast(`Brand "${brand.name}" deleted`, "success");
 }
 
-function openBrandModal(title, name, color) {
+function openBrandModal(title, name, color, billingCode = "") {
   brandModalTitle.textContent = title;
   brandModalName.value = name;
   brandModalColor.value = color;
   brandModalHex.textContent = color.toUpperCase();
+  brandModalBillingCode.value = billingCode;
   brandModal.hidden = false;
   brandModalName.focus();
   return new Promise((resolve) => {
@@ -989,7 +1015,27 @@ function openBrandModal(title, name, color) {
       if (ok) {
         const n = brandModalName.value.trim();
         if (!n) { resolve(null); return; }
-        resolve({ name: n, color: brandModalColor.value.toUpperCase() });
+        resolve({ name: n, color: brandModalColor.value.toUpperCase(), billingCode: brandModalBillingCode.value.trim() });
+      } else {
+        resolve(null);
+      }
+    };
+  });
+}
+
+function openMemberModal() {
+  memberModalName.value = "";
+  memberModalId.value = "";
+  memberModal.hidden = false;
+  memberModalName.focus();
+  return new Promise((resolve) => {
+    _memberModalResolve = (ok) => {
+      _memberModalResolve = null;
+      memberModal.hidden = true;
+      if (ok) {
+        const n = memberModalName.value.trim();
+        if (!n) { resolve(null); return; }
+        resolve({ name: n, memberId: memberModalId.value.trim() });
       } else {
         resolve(null);
       }
