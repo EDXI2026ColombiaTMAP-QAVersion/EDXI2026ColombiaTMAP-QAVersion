@@ -393,7 +393,7 @@ function renderPalette() {
     radio.value = brand.id;
     radio.checked = paintMode === "brand" && selectedBrandId === brand.id;
     swatch.style.background = brand.color;
-    name.textContent = brand.name;
+    name.textContent = brand.billingCode ? `${brand.name} (${brand.billingCode})` : brand.name;
     radio.addEventListener("change", () => {
       selectedBrandId = brand.id;
       paintMode = "brand";
