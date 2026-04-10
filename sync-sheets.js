@@ -90,6 +90,7 @@ function _compressData(data) {
     _v: 2,
     members: data.members,
     brands: data.brands,
+    memberDetails: data.memberDetails || {},
     assignments: {}
   };
 
@@ -137,6 +138,7 @@ function _decompressData(data) {
   const out = {
     members: data.members || [],
     brands: data.brands || [],
+    memberDetails: data.memberDetails || {},
     assignments: {}
   };
   
