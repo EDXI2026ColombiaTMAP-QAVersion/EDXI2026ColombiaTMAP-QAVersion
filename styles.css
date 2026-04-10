@@ -212,7 +212,7 @@ button:hover {
 
 .brand-item {
   display: grid;
-  grid-template-columns: auto 14px 1fr auto;
+  grid-template-columns: auto 14px 1fr auto auto;
   align-items: center;
   gap: 4px;
   padding: 3px;
