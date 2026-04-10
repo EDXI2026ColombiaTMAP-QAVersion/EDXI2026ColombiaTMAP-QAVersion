@@ -550,7 +550,7 @@ function renderTotals() {
       const arr = state.assignments[day.key][member];
       for (let i = 0; i < arr.length; i += 1) {
         const value = arr[i];
-        if (lunchSlots.has(i) || !value) continue;
+        if (value === "LUNCH" || !value) continue;
         memberHalfHours += 1;
         brandMap.set(value, (brandMap.get(value) || 0) + 1);
       }
@@ -581,8 +581,8 @@ function memberMonthHours(member) {
     if (day.foreign || isHoliday(day.key)) continue;
     const arr = state.assignments[day.key][member];
     for (let i = 0; i < arr.length; i += 1) {
-      if (lunchSlots.has(i)) continue;
-      if (arr[i]) hh += 1;
+      if (arr[i] === "LUNCH" || !arr[i]) continue;
+      hh += 1;
     }
   }
   return hh * 0.5;
@@ -595,8 +595,8 @@ function memberWeekHours(member, weekIndex) {
     if (day.foreign || isHoliday(day.key)) continue;
     const arr = state.assignments[day.key][member];
     for (let i = 0; i < arr.length; i += 1) {
-      if (lunchSlots.has(i)) continue;
-      if (arr[i]) hh += 1;
+      if (arr[i] === "LUNCH" || !arr[i]) continue;
+      hh += 1;
     }
   }
   return hh * 0.5;
@@ -605,7 +605,7 @@ function memberWeekHours(member, weekIndex) {
 let _lastPaintSyncPromise = null;
 
 function applyToCell(member, dayKey, slotIndex) {
-  if (lunchSlots.has(slotIndex)) return;
+  if (state.assignments[dayKey][member][slotIndex] === "LUNCH") return;
   state.assignments[dayKey][member][slotIndex] = paintMode === "erase" ? null : selectedBrandId;
   _lastPaintSyncPromise = saveState(dayKey);
 }
