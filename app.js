@@ -114,6 +114,8 @@ let templateFileInput;
 let recurringBtn;
 let legendPanel;
 let toggleLegendBtn;
+let brandSearchInput;
+let brandSearchQuery = "";
 
 // Brand modal refs
 let brandModal, brandModalTitle, brandModalName, brandModalColor, brandModalHex, brandModalBillingCode, brandModalSave, brandModalCancel;
@@ -156,6 +158,7 @@ function init() {
   recurringBtn = document.getElementById("recurringBtn");
   legendPanel = document.getElementById("legendPanel");
   toggleLegendBtn = document.getElementById("toggleLegendBtn");
+  brandSearchInput = document.getElementById("brandSearchInput");
 
   // Brand modal
   brandModal = document.getElementById("brandModal");
@@ -396,6 +399,15 @@ function saveState(changedDay) {
 function renderPalette() {
   brandPalette.innerHTML = "";
   for (const brand of state.brands) {
+    // Filter by search query
+    if (brandSearchQuery) {
+      const brandName = brand.name.toLowerCase();
+      const brandCode = (brand.billingCode || "").toLowerCase();
+      if (!brandName.includes(brandSearchQuery) && !brandCode.includes(brandSearchQuery)) {
+        continue;
+      }
+    }
+    
     const node = brandTemplate.content.firstElementChild.cloneNode(true);
     const radio = node.querySelector("input");
     const swatch = node.querySelector(".swatch");
@@ -748,6 +760,11 @@ function attachEvents() {
     renderPalette();
     saveState();
     showToast(`Imported ${added} brand(s)`, "success");
+  });
+
+  brandSearchInput.addEventListener("input", () => {
+    brandSearchQuery = brandSearchInput.value.toLowerCase().trim();
+    renderPalette();
   });
 
   exportExcelBtn.addEventListener("click", async () => {
