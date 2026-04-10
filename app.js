@@ -513,7 +513,18 @@ function renderTable() {
       const tr = document.createElement("tr");
       const memberCell = document.createElement("td");
       memberCell.className = "member-cell";
-      memberCell.textContent = `${member} (${memberWeekHours(member, w).toFixed(1)}h)`;
+      const memberId = state.memberDetails?.[member]?.memberId || "";
+      const memberLabel = document.createElement("span");
+      memberLabel.textContent = `${member} (${memberWeekHours(member, w).toFixed(1)}h)`;
+      if (memberId) memberLabel.title = `ID: ${memberId}`;
+      const memberEditBtn = document.createElement("button");
+      memberEditBtn.type = "button";
+      memberEditBtn.className = "member-edit-btn";
+      memberEditBtn.title = memberId ? `Edit — ID: ${memberId}` : "Set Member ID";
+      memberEditBtn.textContent = "✏️";
+      memberEditBtn.addEventListener("click", (e) => { e.stopPropagation(); editMember(member); });
+      memberCell.appendChild(memberLabel);
+      memberCell.appendChild(memberEditBtn);
       tr.appendChild(memberCell);
 
       for (let i = 0; i < weekDays.length; i += 1) {
@@ -1249,14 +1260,19 @@ function openBrandModal(title, name, color, billingCode = "") {
   });
 }
 
-function openMemberModal() {
-  memberModalName.value = "";
-  memberModalId.value = "";
+function openMemberModal(prefillName = "", prefillId = "") {
+  const isEdit = prefillName !== "";
+  memberModalName.value = prefillName;
+  memberModalName.disabled = isEdit;
+  memberModalId.value = prefillId;
+  // Update title dynamically
+  memberModal.querySelector("h3").textContent = isEdit ? "Edit Member ID" : "Add Team Member";
   memberModal.hidden = false;
-  memberModalName.focus();
+  (isEdit ? memberModalId : memberModalName).focus();
   return new Promise((resolve) => {
     _memberModalResolve = (ok) => {
       _memberModalResolve = null;
+      memberModalName.disabled = false;
       memberModal.hidden = true;
       if (ok) {
         const n = memberModalName.value.trim();
@@ -1267,6 +1283,17 @@ function openMemberModal() {
       }
     };
   });
+}
+
+async function editMember(memberName) {
+  const currentId = state.memberDetails?.[memberName]?.memberId || "";
+  const result = await openMemberModal(memberName, currentId);
+  if (!result) return;
+  if (!state.memberDetails) state.memberDetails = {};
+  state.memberDetails[memberName] = { memberId: result.memberId };
+  const ok = await saveState();
+  renderTable();
+  if (ok) showToast(`Member ID for "${memberName}" updated`, "success");
 }
 
 function applyTotalsCollapse(collapsed) {

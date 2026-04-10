@@ -299,6 +299,24 @@ td {
   left: 0;
   z-index: 1;
   background: #FAFBFC;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.member-edit-btn {
+  background: none;
+  border: none;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0.3;
+  padding: 0 2px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.member-cell:hover .member-edit-btn {
+  opacity: 1;
 }
 
 .member-head {
