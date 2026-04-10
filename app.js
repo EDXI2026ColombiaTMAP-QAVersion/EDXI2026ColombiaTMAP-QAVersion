@@ -232,10 +232,8 @@ function updateScheduleTitle() {
 function buildSlots() {
   const built = [];
   let idx = 0;
-  for (let hour = 7; hour <= 17; hour += 1) {
+  for (let hour = 7; hour <= 16; hour += 1) {
     for (const minute of [0, 30]) {
-      // Don't add 17:30 — max should be 17:00
-      if (hour === 17 && minute === 30) continue;
       built.push({ index: idx, label: toLabel(hour, minute), hour, minute, isLunch: hour === 13 });
       idx += 1;
     }
