@@ -1012,20 +1012,22 @@ async function exportScheduleToNewExcel() {
     // Headers
     sheet.cell("A1").value("Team Member").style("bold", true).style("fill", "D3D3D3");
     sheet.cell("B1").value("Member ID").style("bold", true).style("fill", "D3D3D3");
-    sheet.cell("C1").value("Client").style("bold", true).style("fill", "D3D3D3");
-    sheet.cell("D1").value("Billing Code").style("bold", true).style("fill", "D3D3D3");
-    sheet.cell("E1").value("Start time").style("bold", true).style("fill", "D3D3D3");
-    sheet.cell("F1").value("End time").style("bold", true).style("fill", "D3D3D3");
-    sheet.cell("G1").value("Hours").style("bold", true).style("fill", "D3D3D3");
+    sheet.cell("C1").value("Date").style("bold", true).style("fill", "D3D3D3");
+    sheet.cell("D1").value("Client").style("bold", true).style("fill", "D3D3D3");
+    sheet.cell("E1").value("Billing Code").style("bold", true).style("fill", "D3D3D3");
+    sheet.cell("F1").value("Start time").style("bold", true).style("fill", "D3D3D3");
+    sheet.cell("G1").value("End time").style("bold", true).style("fill", "D3D3D3");
+    sheet.cell("H1").value("Hours").style("bold", true).style("fill", "D3D3D3");
 
     // Set column widths
     sheet.column("A").width(25);
     sheet.column("B").width(15);
-    sheet.column("C").width(20);
-    sheet.column("D").width(15);
-    sheet.column("E").width(12);
+    sheet.column("C").width(12);
+    sheet.column("D").width(20);
+    sheet.column("E").width(15);
     sheet.column("F").width(12);
-    sheet.column("G").width(10);
+    sheet.column("G").width(12);
+    sheet.column("H").width(10);
 
     let rowNum = 2;
     const brandById = new Map(state.brands.map((b) => [b.id, b]));
@@ -1051,6 +1053,12 @@ async function exportScheduleToNewExcel() {
       };
     };
 
+    // Format date as M/D/YYYY
+    const formatDate = (dateStr) => {
+      const [year, month, day] = dateStr.split('-');
+      return `${parseInt(month)}/${parseInt(day)}/${year}`;
+    };
+
     // Sort days chronologically
     const sortedDays = Object.keys(state.assignments)
       .filter(key => key !== '_config')
@@ -1066,28 +1074,48 @@ async function exportScheduleToNewExcel() {
         
         const memberSlots = dayAssignments[member];
         
-        // Iterate through all slots for this member on this day
-        for (let slotIdx = 0; slotIdx < memberSlots.length; slotIdx++) {
-          const brandId = memberSlots[slotIdx];
+        // Group consecutive slots by brand
+        let i = 0;
+        while (i < memberSlots.length) {
+          const brandId = memberSlots[i];
           
           // Skip empty slots and lunch
-          if (!brandId || brandId === "LUNCH" || brandId === ".") continue;
+          if (!brandId || brandId === "LUNCH" || brandId === ".") {
+            i++;
+            continue;
+          }
           
           const brand = brandById.get(brandId);
-          if (!brand) continue;
+          if (!brand) {
+            i++;
+            continue;
+          }
           
-          const slotTime = getSlotTime(slotIdx);
+          // Find consecutive slots with same brand
+          let startSlot = i;
+          let endSlot = i;
+          
+          while (endSlot + 1 < memberSlots.length && memberSlots[endSlot + 1] === brandId) {
+            endSlot++;
+          }
+          
+          // Get start time of first slot and end time of last slot
+          const startTime = getSlotTime(startSlot).start;
+          const endTime = getSlotTime(endSlot).end;
+          const hours = (endSlot - startSlot + 1) * 0.5;
           
           // Add row
           sheet.cell(`A${rowNum}`).value(member);
           sheet.cell(`B${rowNum}`).value(state.memberDetails?.[member]?.memberId || "");
-          sheet.cell(`C${rowNum}`).value(brand.name || "");
-          sheet.cell(`D${rowNum}`).value(brand.billingCode || "");
-          sheet.cell(`E${rowNum}`).value(slotTime.start);
-          sheet.cell(`F${rowNum}`).value(slotTime.end);
-          sheet.cell(`G${rowNum}`).value(0.5); // Each slot is 30 min = 0.5 hours
+          sheet.cell(`C${rowNum}`).value(formatDate(dayKey));
+          sheet.cell(`D${rowNum}`).value(brand.name || "");
+          sheet.cell(`E${rowNum}`).value(brand.billingCode || "");
+          sheet.cell(`F${rowNum}`).value(startTime);
+          sheet.cell(`G${rowNum}`).value(endTime);
+          sheet.cell(`H${rowNum}`).value(hours);
           
           rowNum++;
+          i = endSlot + 1;
         }
       }
     }
