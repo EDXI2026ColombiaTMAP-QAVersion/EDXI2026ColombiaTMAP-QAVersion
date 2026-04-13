@@ -1263,12 +1263,12 @@ function openBrandModal(title, name, color, billingCode = "") {
 function openMemberModal(prefillName = "", prefillId = "") {
   const isEdit = prefillName !== "";
   memberModalName.value = prefillName;
-  memberModalName.disabled = isEdit;
+  memberModalName.disabled = false;
   memberModalId.value = prefillId;
   // Update title dynamically
-  memberModal.querySelector("h3").textContent = isEdit ? "Edit Member ID" : "Add Team Member";
+  memberModal.querySelector("h3").textContent = isEdit ? "Edit Team Member" : "Add Team Member";
   memberModal.hidden = false;
-  (isEdit ? memberModalId : memberModalName).focus();
+  memberModalName.focus();
   return new Promise((resolve) => {
     _memberModalResolve = (ok) => {
       _memberModalResolve = null;
@@ -1289,11 +1289,27 @@ async function editMember(memberName) {
   const currentId = state.memberDetails?.[memberName]?.memberId || "";
   const result = await openMemberModal(memberName, currentId);
   if (!result) return;
+  const newName = result.name;
   if (!state.memberDetails) state.memberDetails = {};
-  state.memberDetails[memberName] = { memberId: result.memberId };
+  if (newName !== memberName) {
+    // Rename in members array
+    const idx = state.members.indexOf(memberName);
+    if (idx !== -1) state.members[idx] = newName;
+    // Migrate memberDetails
+    state.memberDetails[newName] = state.memberDetails[memberName] || {};
+    delete state.memberDetails[memberName];
+    // Migrate assignments across all days
+    for (const dayKey of Object.keys(state.assignments)) {
+      if (memberName in state.assignments[dayKey]) {
+        state.assignments[dayKey][newName] = state.assignments[dayKey][memberName];
+        delete state.assignments[dayKey][memberName];
+      }
+    }
+  }
+  state.memberDetails[newName] = { memberId: result.memberId };
   const ok = await saveState();
   renderTable();
-  if (ok) showToast(`Member ID for "${memberName}" updated`, "success");
+  if (ok) showToast(`Member "${newName}" updated`, "success");
 }
 
 function applyTotalsCollapse(collapsed) {
