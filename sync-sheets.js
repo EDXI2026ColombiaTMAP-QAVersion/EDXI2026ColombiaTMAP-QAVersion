@@ -1,7 +1,7 @@
 // Google Sheets Configuration
 const SHEET_ID = "1aZQlQdszET32S_pM8et-L_T0tA6CZ-4uFKPuCWz3Vxo";
 const SHEET_NAME = "assignments";
-const SHEET_RANGE = "A1";
+const SHEET_RANGE = "B1";
 
 // Google Sheets API Key
 let API_KEY = null;

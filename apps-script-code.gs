@@ -65,7 +65,7 @@ function getDataFromCell() {
   try {
     const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
     const sheet = ss.getSheetByName(SHEET_NAME);
-    const cellValue = sheet.getRange('A1').getValue();
+    const cellValue = sheet.getRange('B1').getValue();
     
     if (!cellValue || cellValue === '') {
       Logger.log('⚠️ Cell A1 is empty');
@@ -93,7 +93,7 @@ function saveDataToCell(data) {
   try {
     const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
     const sheet = ss.getSheetByName(SHEET_NAME);
-    sheet.getRange('A1').setValue(JSON.stringify(data));
+    sheet.getRange('B1').setValue(JSON.stringify(data));
     SpreadsheetApp.flush();
     Logger.log('✓ Data saved to cell A1');
     return true;
@@ -257,7 +257,7 @@ function saveAllChunk(e) {
 
       const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
       const sheet = ss.getSheetByName(SHEET_NAME);
-      sheet.getRange('A1').setValue(assembled);
+      sheet.getRange('B1').setValue(assembled);
       SpreadsheetApp.flush();
 
       return ContentService.createTextOutput(JSON.stringify({success:true, saved:true, length:assembled.length}))
@@ -279,7 +279,7 @@ function saveDayData(day, data) {
   try {
     const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
     const sheet = ss.getSheetByName(SHEET_NAME);
-    const cell = sheet.getRange("A1");
+    const cell = sheet.getRange("B1");
     let fullData = {};
     if (cell.getValue()) {
       try { fullData = JSON.parse(cell.getValue()); } catch (e) { fullData = {}; }
