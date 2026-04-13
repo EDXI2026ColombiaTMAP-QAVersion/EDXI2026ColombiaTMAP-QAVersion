@@ -51,9 +51,22 @@ function doGet(e) {
 }
 
 function doPost(e) {
+  const lock = LockService.getDocumentLock();
+  lock.waitLock(30000);
   try {
     // Parse the JSON from the POST body
     const data = JSON.parse(e.postData.contents);
+    
+    // Handler for saveData action with compressed format
+    if (data.action === 'saveData' && data.data) {
+      const jsonStr = JSON.stringify(data.data);
+      const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+      const sheet = ss.getSheetByName(SHEET_NAME);
+      sheet.getRange('A1').setValue(jsonStr);
+      SpreadsheetApp.flush();
+      Logger.log('✅ [doPost/saveData] Guardado ' + jsonStr.length + ' chars en A1');
+      return ContentService.createTextOutput(JSON.stringify({success: true, message: 'Data saved', length: jsonStr.length})).setMimeType(ContentService.MimeType.JSON);
+    }
     
     // Check if this is the compressed data format (direct save)
     if (data._v === 2 && data.members !== undefined && data.brands !== undefined) {
@@ -85,6 +98,8 @@ function doPost(e) {
   } catch (error) {
     Logger.log('❌ Error in doPost: ' + error.toString());
     return ContentService.createTextOutput(JSON.stringify({success: false, error: error.toString()})).setMimeType(ContentService.MimeType.JSON);
+  } finally {
+    lock.releaseLock();
   }
 }
 

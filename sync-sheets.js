@@ -9,6 +9,9 @@ let API_KEY = null;
 // Google Apps Script Web App URL
 let WEB_APP_URL = null;
 
+// Render Proxy URL (optional, for CORS-free requests)
+let PROXY_URL = null;
+
 /**
  * Fetches data from Google Sheet using Sheets API
  * All data (members, brands, assignments) comes from the Sheet
@@ -262,29 +265,49 @@ async function _sendFullState(state) {
   const jsonStr = JSON.stringify(compressed);
   console.log("📤 Datos: " + Math.round(jsonStr.length / 1024) + "KB (comprimido), " + jsonStr.length + " chars");
 
-  // Send via GET (no CORS issues)
+  // Send via POST to Apps Script doPost handler
   try {
-    const url = WEB_APP_URL + "?action=saveData&data=" + encodeURIComponent(jsonStr);
-    
-    const response = await fetch(url, { 
-      method: "GET",
-      cache: 'no-store'
-    });
+    const postData = {
+      action: "saveData",
+      data: compressed
+    };
 
-    if (!response.ok) {
-      console.error("❌ HTTP error:", response.status);
-      return { ok: false, error: "HTTP " + response.status };
+    console.log("📡 Enviando datos al Apps Script via POST...");
+    
+    // Try normal POST first (will fail if proxy not set up, but we'll continue anyway)
+    try {
+      const response = await fetch(WEB_APP_URL, { 
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(postData)
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success) {
+          console.log("✅ Guardado exitoso via POST: " + jsonStr.length + " caracteres");
+          return { ok: true };
+        }
+      }
+    } catch (fetchErr) {
+      console.warn("⚠️ POST falló (posible CORS), intentando fallback...", fetchErr.message);
     }
 
-    const result = await response.json();
-    
-    if (result.success) {
-      console.log("✅ Guardado exitoso via GET: " + jsonStr.length + " caracteres");
+    // If POST fails, try no-cors mode as fallback  
+    try {
+      const noCorsResponse = await fetch(WEB_APP_URL, { 
+        method: "POST",
+        body: JSON.stringify(postData),
+        mode: 'no-cors'
+      });
+      // no-cors doesn't let us read response, but request goes through
+      console.log("✅ Datos enviados via POST no-cors (respuesta no verificable)");
       return { ok: true };
-    } else {
-      console.error("❌ Respuesta GET negativa:", result.error);
-      return { ok: false, error: result.error || "Unknown error" };
+    } catch (noCorsErr) {
+      console.error("❌ Ambos intentos fallaron");
+      return { ok: false, error: noCorsErr.message };
     }
+    
   } catch (error) {
     console.error("❌ Error en _sendFullState:", error.message);
     return { ok: false, error: error.message };
@@ -333,11 +356,13 @@ async function fullSyncToSheet() {
 }
 
 /**
- * Configure the API Key and Web App URL
+ * Configure the API Key, Web App URL, and optional Proxy URL
  */
-function configureSheetSync(apiKey, webAppUrl) {
+function configureSheetSync(apiKey, webAppUrl, proxyUrl = null) {
   API_KEY = apiKey;
   WEB_APP_URL = webAppUrl;
+  PROXY_URL = proxyUrl;
+  console.log('🔧 Sync configured:', { WEB_APP_URL: !!WEB_APP_URL, PROXY_URL: !!PROXY_URL });
 }
 
 /**

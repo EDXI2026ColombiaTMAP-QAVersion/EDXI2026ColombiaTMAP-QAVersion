@@ -16,6 +16,27 @@ export default async function handler(req, res) {
   }
 
   try {
+    // Handle saveData action (for sheet sync)
+    if (req.method === 'POST' && req.body?.action === 'saveData') {
+      const jsonData = req.body.data; // This is the stringified JSON
+      
+      // Forward to Apps Script via GET (to avoid CORS preflight on Apps Script side)
+      const url = WEB_APP_URL + "?action=saveData&data=" + encodeURIComponent(jsonData);
+      
+      console.log(`[proxy] Forwarding saveData to Apps Script, data length: ${jsonData?.length}`);
+      
+      const response = await fetch(url, { method: "GET" });
+      const data = await response.json();
+      
+      res.status(200).json({
+        success: data.success || false,
+        message: data.message,
+        length: data.length
+      });
+      return;
+    }
+    
+    // Original GET/POST handlers
     if (req.method === 'GET') {
       const action = req.query.action || 'getData';
       
