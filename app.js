@@ -1068,6 +1068,9 @@ async function exportScheduleToNewExcel() {
     for (const member of state.members) {
       // Then iterate through all days for this member
       for (const dayKey of sortedDays) {
+        // Skip holidays
+        if (isHoliday(dayKey)) continue;
+        
         const dayAssignments = state.assignments[dayKey];
         
         if (!dayAssignments[member]) continue;
