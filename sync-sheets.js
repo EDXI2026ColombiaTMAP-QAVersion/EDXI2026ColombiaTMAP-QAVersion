@@ -242,6 +242,10 @@ async function _flushPendingDays(state) {
  * falls back to GET-based saveAll using chunked approach.
  */
 async function _sendFullState(state) {
+  // Log what we're about to send
+  console.log("🔍 [_sendFullState] state.brands:", state.brands);
+  console.log("🔍 [_sendFullState] state.assignments keys:", Object.keys(state.assignments || {}).length);
+  
   // Build complete data
   const fullData = {
     members: state.members,
