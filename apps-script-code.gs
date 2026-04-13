@@ -7,7 +7,24 @@ function doGet(e) {
   try {
     const action = e.parameter.action;
 
-    if (action === "saveAllChunk") {
+    if (action === "saveData") {
+      // New simple save: receive compressed JSON directly as GET parameter
+      const jsonStr = e.parameter.data;
+      if (!jsonStr) {
+        return ContentService.createTextOutput(JSON.stringify({success: false, error: 'No data provided'})).setMimeType(ContentService.MimeType.JSON);
+      }
+      try {
+        const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+        const sheet = ss.getSheetByName(SHEET_NAME);
+        sheet.getRange('A1').setValue(jsonStr);
+        SpreadsheetApp.flush();
+        Logger.log('✅ [doGet/saveData] Guardado ' + jsonStr.length + ' chars en A1');
+        return ContentService.createTextOutput(JSON.stringify({success: true, message: 'Data saved', length: jsonStr.length})).setMimeType(ContentService.MimeType.JSON);
+      } catch (err) {
+        Logger.log('❌ [doGet/saveData] Error: ' + err.toString());
+        return ContentService.createTextOutput(JSON.stringify({success: false, error: err.toString()})).setMimeType(ContentService.MimeType.JSON);
+      }
+    } else if (action === "saveAllChunk") {
       return saveAllChunk(e);
     } else if (action === "saveDayData") {
       const day = e.parameter.day;
@@ -26,6 +43,7 @@ function doGet(e) {
     }
     return ContentService.createTextOutput(JSON.stringify({error: 'Invalid action'})).setMimeType(ContentService.MimeType.JSON);
   } catch (error) {
+    Logger.log('❌ [doGet] Error: ' + error.toString());
     return ContentService.createTextOutput(JSON.stringify({success: false, error: error.toString()})).setMimeType(ContentService.MimeType.JSON);
   } finally {
     lock.releaseLock();

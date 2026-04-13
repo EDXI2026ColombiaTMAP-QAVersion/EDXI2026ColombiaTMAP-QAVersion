@@ -239,7 +239,7 @@ async function _flushPendingDays(state) {
 }
 
 /**
- * Send full state in a single POST request (no chunking needed)
+ * Send full state in a single GET request (avoids CORS issues)
  */
 async function _sendFullState(state) {
   console.log("🔍 [_sendFullState] state.members:", state.members.length);
@@ -262,14 +262,13 @@ async function _sendFullState(state) {
   const jsonStr = JSON.stringify(compressed);
   console.log("📤 Datos: " + Math.round(jsonStr.length / 1024) + "KB (comprimido), " + jsonStr.length + " chars");
 
-  // Send everything in a single POST request (no chunking)
+  // Send via GET (no CORS issues)
   try {
-    const response = await fetch(WEB_APP_URL + "?action=saveAll", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: jsonStr
+    const url = WEB_APP_URL + "?action=saveData&data=" + encodeURIComponent(jsonStr);
+    
+    const response = await fetch(url, { 
+      method: "GET",
+      cache: 'no-store'
     });
 
     if (!response.ok) {
@@ -280,10 +279,10 @@ async function _sendFullState(state) {
     const result = await response.json();
     
     if (result.success) {
-      console.log("✅ Guardado exitoso via POST: " + jsonStr.length + " caracteres");
+      console.log("✅ Guardado exitoso via GET: " + jsonStr.length + " caracteres");
       return { ok: true };
     } else {
-      console.error("❌ Respuesta POST negativa:", result.error);
+      console.error("❌ Respuesta GET negativa:", result.error);
       return { ok: false, error: result.error || "Unknown error" };
     }
   } catch (error) {
