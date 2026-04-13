@@ -513,6 +513,10 @@ function renderTable() {
       const tr = document.createElement("tr");
       const memberCell = document.createElement("td");
       memberCell.className = "member-cell";
+      const boldNames = ["Daniela Mahecha", "Hernan Torres", "David Guzman", "William Franco"];
+      if (boldNames.includes(member)) {
+        memberCell.style.fontWeight = "700";
+      }
       const memberId = state.memberDetails?.[member]?.memberId || "";
       const memberLabel = document.createElement("span");
       memberLabel.textContent = `${member} (${memberWeekHours(member, w).toFixed(1)}h)`;
