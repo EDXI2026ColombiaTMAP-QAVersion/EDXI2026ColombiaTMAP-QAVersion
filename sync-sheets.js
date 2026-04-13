@@ -184,6 +184,12 @@ function _decompressData(data) {
 }
 
 function syncDataToSheet(state, changedDays) {
+  // TEMPORARILY DISABLED: The chunking/compression is corrupting the JSON.
+  // Work with data in memory only until we fix the sync system.
+  console.warn("⚠️ Guardado al Sheet deshabilitado temporalmente");
+  return Promise.resolve(true);
+  
+  /*
   if (!WEB_APP_URL) {
     console.warn("⚠️  Web App URL no configurada.");
     return Promise.resolve(false);
@@ -204,6 +210,7 @@ function syncDataToSheet(state, changedDays) {
   clearTimeout(_syncTimer);
   _syncTimer = setTimeout(() => _flushPendingDays(state), 2000);
   return promise;
+  */
 }
 
 async function _flushPendingDays(state) {
