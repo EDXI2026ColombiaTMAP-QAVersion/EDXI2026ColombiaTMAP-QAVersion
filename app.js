@@ -593,7 +593,8 @@ function renderTotals() {
     let memberHalfHours = 0;
     for (const day of weekdays) {
       if (day.foreign || isHoliday(day.key)) continue;
-      const arr = state.assignments[day.key][member];
+      const arr = state.assignments[day.key]?.[member];
+      if (!arr) continue;
       for (let i = 0; i < arr.length; i += 1) {
         const value = arr[i];
         if (value === "LUNCH" || !value) continue;
@@ -625,7 +626,8 @@ function memberMonthHours(member) {
   let hh = 0;
   for (const day of weekdays) {
     if (day.foreign || isHoliday(day.key)) continue;
-    const arr = state.assignments[day.key][member];
+    const arr = state.assignments[day.key]?.[member];
+    if (!arr) continue;
     for (let i = 0; i < arr.length; i += 1) {
       if (arr[i] === "LUNCH" || !arr[i]) continue;
       hh += 1;
@@ -639,7 +641,8 @@ function memberWeekHours(member, weekIndex) {
   const weekDays = weeks[weekIndex] || [];
   for (const day of weekDays) {
     if (day.foreign || isHoliday(day.key)) continue;
-    const arr = state.assignments[day.key][member];
+    const arr = state.assignments[day.key]?.[member];
+    if (!arr) continue;
     for (let i = 0; i < arr.length; i += 1) {
       if (arr[i] === "LUNCH" || !arr[i]) continue;
       hh += 1;
