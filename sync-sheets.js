@@ -20,6 +20,7 @@ async function loadDataFromSheet() {
     }
     
     const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${SHEET_NAME}!${SHEET_RANGE}?key=${API_KEY}`;
+    console.log("🔵 [loadDataFromSheet] Leyendo desde " + SHEET_RANGE);
     const response = await fetch(url, { cache: 'no-store' });
     
     if (!response.ok) {
@@ -27,8 +28,7 @@ async function loadDataFromSheet() {
     }
     
     const result = await response.json();
-    
-    let members = [];
+    console.log("🔵 [loadDataFromSheet] Resultado:", result.values ? ("datos en " + SHEET_RANGE) : "vacío");
     let brands = [];
     let assignments = {};
     let memberDetails = {};
@@ -59,7 +59,7 @@ async function loadDataFromSheet() {
       }
       console.log("✅ Datos cargados del Sheet: " + members.length + " miembros, " + brands.length + " marcas, " + Object.keys(assignments).length + " días");
     } else {
-      console.warn("⚠️ Celda A1 vacía — se inicializará con datos en blanco");
+      console.warn("⚠️ Celda B1 vacía — se inicializará con datos en blanco");
     }
 
     window.PRELOADED_DATA = { members, brands, assignments, memberDetails };
