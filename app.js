@@ -593,7 +593,7 @@ function paintCell(cell, value, slotIndex) {
   if (cell.classList.contains("lunch")) return;
   if (!value) {
     // slot 0 and 1 are 7:00 and 7:30 (early morning) - use light gray
-    const bgColor = (slotIndex === 0 || slotIndex === 1) ? "#d9d9d9" : "#ffffff";
+    const bgColor = (slotIndex === 0 || slotIndex === 1) ? "#f0f2f1" : "#ffffff";
     cell.style.background = bgColor;
     cell.title = "";
     return;
