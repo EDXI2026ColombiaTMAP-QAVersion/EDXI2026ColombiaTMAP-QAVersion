@@ -16,7 +16,7 @@ let WEB_APP_URL = null;
 async function loadDataFromSheet() {
   try {
     if (!WEB_APP_URL) {
-      console.warn("⚠️ Web App URL no configurada, usando Sheets API");
+      console.warn("⚠️ Web App URL no configurada");
       return loadDataViaAPI();
     }
     
@@ -25,15 +25,15 @@ async function loadDataFromSheet() {
     const response = await fetch(url, { cache: 'no-store' });
     
     if (!response.ok) {
-      console.warn("⚠️ Apps Script read failed, falling back to Sheets API");
+      console.warn("⚠️ Apps Script read failed");
       return loadDataViaAPI();
     }
     
     const result = await response.json();
     
     if (!result || !result.data) {
-      console.warn("⚠️ No data from Apps Script");
       window.PRELOADED_DATA = { members: [], brands: [], assignments: {} };
+      console.log("📊 Sheet vacía");
       return false;
     }
     
@@ -51,11 +51,13 @@ async function loadDataFromSheet() {
     }
     
     window.PRELOADED_DATA = { members, brands, assignments, memberDetails };
-    console.log("✅ Datos cargados del Sheet (via Apps Script): " + members.length + " miembros, " + brands.length + " marcas, " + Object.keys(assignments).length + " días");
+    if (members.length > 0 || brands.length > 0 || Object.keys(assignments).length > 0) {
+      console.log("✅ " + members.length + "m, " + brands.length + "b, " + Object.keys(assignments).length + "d");
+    }
     return true;
     
   } catch (error) {
-    console.error("❌ Error al cargar Sheet:", error.message);
+    console.error("❌ Sheet load error:", error.message);
     return loadDataViaAPI();
   }
 }
@@ -105,20 +107,20 @@ async function loadDataViaAPI() {
           }
         }
         members = [...memberSet];
-        console.log("✅ Members extraídos de assignments (fallback): " + members.length);
       }
-      console.log("✅ Datos cargados del Sheet (API): " + members.length + " miembros, " + brands.length + " marcas, " + Object.keys(assignments).length + " días");
+      if (members.length > 0 || brands.length > 0 || Object.keys(assignments).length > 0) {
+        console.log("✅ " + members.length + "m, " + brands.length + "b, " + Object.keys(assignments).length + "d");
+      }
     } else {
-      console.warn("⚠️ Celda A1 vacía — se inicializará con datos en blanco");
+      console.log("📊 Sheet vacía");
     }
 
     window.PRELOADED_DATA = { members, brands, assignments, memberDetails };
     return true;
     
   } catch (error) {
-    console.error("❌ Error al cargar Sheet (API fallback):", error.message);
+    console.error("❌ API load error:", error.message);
     window.PRELOADED_DATA = { members: [], brands: [], assignments: {} };
-    console.warn("⚠️ Sheet no disponible — datos vacíos");
     return false;
   }
 }
