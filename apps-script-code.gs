@@ -2,17 +2,22 @@ const SPREADSHEET_ID = '1aZQlQdszET32S_pM8et-L_T0tA6CZ-4uFKPuCWz3Vxo';
 const SHEET_NAME = 'assignments';
 
 function doPost(e) {
+  if (!e) {
+    Logger.log("❌ doPost called with undefined event");
+    return ContentService.createTextOutput(JSON.stringify({error: "No event provided"})).setMimeType(ContentService.MimeType.JSON);
+  }
+  
   const lock = LockService.getDocumentLock();
   lock.waitLock(30000);
   try {
-    const action = e.parameter.action;
+    const action = e.parameter ? e.parameter.action : null;
     let data = null;
     
     if (action === "saveAll") {
       if (e.postData && e.postData.contents) {
         const parsed = JSON.parse(e.postData.contents);
         data = parsed.data || parsed;
-      } else if (e.parameter.data) {
+      } else if (e.parameter && e.parameter.data) {
         data = JSON.parse(e.parameter.data);
       }
       
@@ -31,7 +36,12 @@ function doPost(e) {
 }
 
 function doGet(e) {
-  Logger.log("🔵 [doGet] Called with action=" + (e.parameter.action || "NONE"));
+  if (!e) {
+    Logger.log("❌ [doGet] called with undefined event");
+    return ContentService.createTextOutput(JSON.stringify({error: "No event provided"})).setMimeType(ContentService.MimeType.JSON);
+  }
+  
+  Logger.log("🔵 [doGet] Called with action=" + ((e.parameter && e.parameter.action) || "NONE"));
   const lock = LockService.getDocumentLock();
   try {
     lock.waitLock(30000);
@@ -42,7 +52,7 @@ function doGet(e) {
   }
   
   try {
-    const action = e.parameter.action;
+    const action = e.parameter ? e.parameter.action : null;
     
     if (action === "getFullData") {
       Logger.log("🔶 [doGet] Routing to getFullData");
@@ -252,6 +262,12 @@ function initializeData() {
 
 // ============= SAVE ALL CHUNK (chunked GET-based save) =============
 function saveAllChunk(e) {
+  if (!e || !e.parameter) {
+    Logger.log("❌ [saveAllChunk] called with invalid event");
+    return ContentService.createTextOutput(JSON.stringify({success:false, error:'Invalid event'}))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  
   const chunk  = parseInt(e.parameter.chunk)  || 0;
   const total  = parseInt(e.parameter.total)  || 1;
   const data   = e.parameter.data   || '';
