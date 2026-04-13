@@ -31,6 +31,7 @@ async function loadDataFromSheet() {
     let members = [];
     let brands = [];
     let assignments = {};
+    let memberDetails = {};
     
     if (result.values && result.values[0] && result.values[0][0]) {
       const jsonString = result.values[0][0];
@@ -38,7 +39,7 @@ async function loadDataFromSheet() {
       members = Array.isArray(sheetData.members) ? sheetData.members : [];
       brands = Array.isArray(sheetData.brands) ? sheetData.brands : [];
       assignments = sheetData.assignments || {};
-      const memberDetails = sheetData.memberDetails || {};
+      memberDetails = sheetData.memberDetails || {};
       // Also check if members/brands were saved inside assignments as _config
       if (assignments._config) {
         if (Array.isArray(assignments._config.members) && assignments._config.members.length) members = assignments._config.members;
