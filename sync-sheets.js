@@ -80,6 +80,7 @@ let _pendingDays = new Set();
 let _syncTimer = null;
 let _pendingResolvers = [];
 let _flushing = false;
+let _sendFullStatePromise = Promise.resolve(); // Queue for serializing _sendFullState calls
 
 /**
  * Compress assignments before saving to Sheets.
@@ -242,6 +243,13 @@ async function _flushPendingDays(state) {
  * falls back to GET-based saveAll using chunked approach.
  */
 async function _sendFullState(state) {
+  // Enqueue to serialize: each call waits for previous to complete
+  _sendFullStatePromise = _sendFullStatePromise.then(() => _sendFullStateImpl(state));
+  return _sendFullStatePromise;
+}
+
+async function _sendFullStateImpl(state) {
+  console.log("🔧 [sync-sheets v36] _sendFullState iniciado");
   // Build complete data
   const fullData = {
     members: state.members,
@@ -253,43 +261,46 @@ async function _sendFullState(state) {
   for (const key of Object.keys(state.assignments)) {
     fullData.assignments[key] = state.assignments[key];
   }
-  const jsonStr = JSON.stringify(_compressData(fullData));
-  console.log("📤 Datos: " + Math.round(jsonStr.length / 1024) + "KB (comprimido)");
+  const compressed = _compressData(fullData);
+  const jsonStr = JSON.stringify(compressed);
+  console.log("📤 Datos: " + Math.round(jsonStr.length / 1024) + "KB (comprimido), " + Math.ceil(jsonStr.length / 1000) + " chunks");
 
   const CHUNK_SIZE = 1000;
   const totalChunks = Math.ceil(jsonStr.length / CHUNK_SIZE);
+  // Use one stable batchId for all retries of the same state snapshot
+  const batchId = Date.now().toString();
 
-  // Retry the full send+verify cycle up to 3 times
+  // Retry up to 3 times only on actual network errors
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt > 0) {
       console.log("🔄 Reintento " + attempt + "/2...");
-      await new Promise(r => setTimeout(r, 1500));
+      await new Promise(r => setTimeout(r, 2000));
     }
-
-    // Use a unique batch ID so the Apps Script can discard stale chunks
-    // from any previous failed/partial sync
-    const batchId = Date.now().toString();
 
     let sendOk = true;
     for (let i = 0; i < totalChunks; i++) {
       const chunk = jsonStr.substring(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
       const result = await _sendGetSaveAll(chunk, i, totalChunks, batchId);
-      if (!result.ok) { sendOk = false; break; }
+      if (!result.ok) {
+        console.warn("⚠️ Error enviando chunk " + i + "/" + totalChunks + ": " + result.error);
+        sendOk = false;
+        break;
+      }
+      // Small delay between chunks to avoid overwhelming Apps Script
       if (i < totalChunks - 1) {
-        await new Promise(r => setTimeout(r, 500));
+        await new Promise(r => setTimeout(r, 300));
       }
     }
 
-    if (!sendOk) continue;
-
-    // Wait for Apps Script to flush PropertiesService assembly and write to Sheet
-    await new Promise(r => setTimeout(r, 4000));
-    const verified = await _verifySheetSave(jsonStr);
-    if (verified) return { ok: true };
-    console.warn("⚠️ Verificación falló (intento " + (attempt + 1) + "/3)");
+    if (sendOk) {
+      // Trust Apps Script response — Sheets API caches reads for 30-60s after write
+      // so re-reading via googleapis.com always returns stale data and falsely fails
+      console.log("✅ Datos enviados correctamente al Apps Script (batch=" + batchId + ")");
+      return { ok: true };
+    }
   }
 
-  return { ok: false, error: "Verification failed after 3 attempts" };
+  return { ok: false, error: "Network error after 3 attempts" };
 }
 
 function _countAssignedSlots(data) {
@@ -308,34 +319,32 @@ function _countAssignedSlots(data) {
   return count;
 }
 
-async function _verifySheetSave(expectedJsonStr) {
+async function _verifySheetSave(saveId) {
   try {
     const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${SHEET_NAME}!${SHEET_RANGE}?key=${API_KEY}`;
     const response = await fetch(url, { cache: 'no-store' });
     if (!response.ok) return false;
     const result = await response.json();
-    if (!result.values || !result.values[0] || !result.values[0][0]) return false;
-    const savedJson = result.values[0][0];
-    let expectedData, savedData;
-    try {
-      expectedData = _decompressData(JSON.parse(expectedJsonStr));
-    } catch (parseErr) {
-      console.error("❌ JSON local inválido — error interno:", parseErr.message);
+    if (!result.values || !result.values[0] || !result.values[0][0]) {
+      console.warn("⚠️ A1 está vacía — Apps Script no escribió datos");
       return false;
     }
+    const savedJson = result.values[0][0];
+    let savedRaw;
     try {
-      savedData = _decompressData(JSON.parse(savedJson));
+      savedRaw = JSON.parse(savedJson);
     } catch (parseErr) {
-      console.error("❌ JSON en A1 está corrupto — se reintentará el guardado:", parseErr.message);
-      console.error("   Primeros 200 chars en A1:", savedJson.substring(0, 200));
-      return false; // triggers retry in _sendFullState
+      console.error("❌ JSON en A1 corrupto:", parseErr.message, "| Primeros 200 chars:", savedJson.substring(0, 200));
+      return false;
     }
-    const expectedSlots = _countAssignedSlots(expectedData);
-    const savedSlots = _countAssignedSlots(savedData);
-    const ok = expectedSlots === savedSlots;
-    if (ok) console.log(`✅ Verificación exitosa: ${savedSlots} slots asignados en Sheet`);
-    else console.warn(`⚠️ Verificación: esperado ${expectedSlots} slots, Sheet tiene ${savedSlots}`);
-    return ok;
+    // Check if OUR specific write landed: the _wid token we embedded must match
+    if (savedRaw._wid === saveId) {
+      console.log("✅ Verificación exitosa: guardado confirmado en Sheet (wid=" + saveId + ")");
+      return true;
+    }
+    console.warn("⚠️ A1 no refleja el guardado. En sheet: _wid=" + (savedRaw._wid || 'ninguno') + ", esperado: " + saveId);
+    console.warn("   Primeros 200 chars de A1:", savedJson.substring(0, 200));
+    return false;
   } catch (e) {
     // Only skip verification for genuine network errors — do not mask data corruption
     console.warn("⚠️ Error de red al verificar guardado (se asume OK):", e.message);
