@@ -1,80 +1,62 @@
 const SPREADSHEET_ID = '1aZQlQdszET32S_pM8et-L_T0tA6CZ-4uFKPuCWz3Vxo';
 const SHEET_NAME = 'assignments';
 
-function doPost(e) {
-  if (!e) {
-    Logger.log("❌ doPost called with undefined event");
-    return ContentService.createTextOutput(JSON.stringify({error: "No event provided"})).setMimeType(ContentService.MimeType.JSON);
-  }
-  
+function doGet(e) {
   const lock = LockService.getDocumentLock();
   lock.waitLock(30000);
   try {
-    const action = e.parameter ? e.parameter.action : null;
-    let data = null;
-    
-    if (action === "saveAll") {
-      if (e.postData && e.postData.contents) {
-        const parsed = JSON.parse(e.postData.contents);
-        data = parsed.data || parsed;
-      } else if (e.parameter && e.parameter.data) {
-        data = JSON.parse(e.parameter.data);
-      }
-      
-      if (data) {
-        return saveToSheet(data);
-      }
+    const action = e.parameter.action;
+
+    if (action === "saveAllChunk") {
+      return saveAllChunk(e);
+    } else if (action === "saveDayData") {
+      const day = e.parameter.day;
+      const data = JSON.parse(e.parameter.data);
+      return saveDayData(day, data);
+    } else if (action === 'debugSheets') {
+      return debugSheets();
+    } else if (action === 'initData') {
+      return initializeData();
+    } else if (action === 'getMembers') {
+      return getMembers();
+    } else if (action === 'getBrands') {
+      return getBrands();
+    } else if (action === 'getSchedule') {
+      return getSchedule();
     }
-    
-    return ContentService.createTextOutput(JSON.stringify({error: "Invalid action"})).setMimeType(ContentService.MimeType.JSON);
+    return ContentService.createTextOutput(JSON.stringify({error: 'Invalid action'})).setMimeType(ContentService.MimeType.JSON);
   } catch (error) {
-    Logger.log("❌ doPost error: " + error.toString());
     return ContentService.createTextOutput(JSON.stringify({success: false, error: error.toString()})).setMimeType(ContentService.MimeType.JSON);
   } finally {
     lock.releaseLock();
   }
 }
 
-function doGet(e) {
-  if (!e) {
-    Logger.log("❌ [doGet] called with undefined event");
-    return ContentService.createTextOutput(JSON.stringify({error: "No event provided"})).setMimeType(ContentService.MimeType.JSON);
-  }
-  
-  Logger.log("🔵 [doGet] Called with action=" + ((e.parameter && e.parameter.action) || "NONE"));
-  const lock = LockService.getDocumentLock();
+function doPost(e) {
   try {
-    lock.waitLock(30000);
-  } catch(lockErr) {
-    Logger.log("❌ [doGet] Document lock timeout: " + lockErr.toString());
-    return ContentService.createTextOutput(JSON.stringify({success:false, error:'Lock timeout'}))
-      .setMimeType(ContentService.MimeType.JSON);
-  }
-  
-  try {
-    const action = e.parameter ? e.parameter.action : null;
+    // Parse the JSON from the POST body (sent as text/plain to avoid CORS)
+    const data = JSON.parse(e.postData.contents);
+    const action = data.action;
     
-    if (action === "getFullData") {
-      Logger.log("🔶 [doGet] Routing to getFullData");
-      return getFullData();
-    } else if (action === "saveAllChunk") {
-      Logger.log("🔶 [doGet] Routing to saveAllChunk");
-      return saveAllChunk(e);
-    } else if (action === "saveDayData") {
-      Logger.log("🔶 [doGet] Routing to saveDayData");
-      const day = e.parameter.day;
-      const data = JSON.parse(e.parameter.data);
-      return saveDayData(day, data);
+    if (action === 'saveData') {
+      if (data.data && data.data.assignments) {
+        const currentData = getDataFromCell();
+        currentData.assignments = data.data.assignments;
+        saveDataToCell(currentData);
+        return ContentService.createTextOutput(JSON.stringify({success: true})).setMimeType(ContentService.MimeType.JSON);
+      }
+    } else if (action === 'saveSchedule') {
+      if (data.data) {
+        saveCompleteData(data.data);
+      } else {
+        saveSchedule(data.assignments);
+      }
+      return ContentService.createTextOutput(JSON.stringify({success: true})).setMimeType(ContentService.MimeType.JSON);
     }
-    
-    Logger.log("⚠️ [doGet] Unknown action: " + action);
-    return ContentService.createTextOutput(JSON.stringify({error: "Invalid action"})).setMimeType(ContentService.MimeType.JSON);
+    return ContentService.createTextOutput(JSON.stringify({error: 'Invalid action'})).setMimeType(ContentService.MimeType.JSON);
   } catch (error) {
-    Logger.log("❌ [doGet] error: " + error.toString());
+    Logger.log('Error in doPost: ' + error.toString());
     return ContentService.createTextOutput(JSON.stringify({success: false, error: error.toString()})).setMimeType(ContentService.MimeType.JSON);
-  } finally {
-    lock.releaseLock();
-    Logger.log("🔵 [doGet] Lock released");
   }
 }
 
@@ -157,20 +139,6 @@ function getSchedule() {
   } catch (error) {
     Logger.log('❌ Error in getSchedule: ' + error);
     return ContentService.createTextOutput(JSON.stringify({})).setMimeType(ContentService.MimeType.JSON);
-  }
-}
-
-// ============= GET FULL DATA (no API caching) =============
-function getFullData() {
-  try {
-    const data = getDataFromCell();
-    Logger.log('✅ [getFullData] Read ' + JSON.stringify(data).length + ' chars from A1');
-    return ContentService.createTextOutput(JSON.stringify({success: true, data: data}))
-      .setMimeType(ContentService.MimeType.JSON);
-  } catch (error) {
-    Logger.log('❌ [getFullData] Error: ' + error);
-    return ContentService.createTextOutput(JSON.stringify({success: false, error: error.toString()}))
-      .setMimeType(ContentService.MimeType.JSON);
   }
 }
 
@@ -262,137 +230,47 @@ function initializeData() {
 
 // ============= SAVE ALL CHUNK (chunked GET-based save) =============
 function saveAllChunk(e) {
-  if (!e || !e.parameter) {
-    Logger.log("❌ [saveAllChunk] called with invalid event");
-    return ContentService.createTextOutput(JSON.stringify({success:false, error:'Invalid event'}))
-      .setMimeType(ContentService.MimeType.JSON);
-  }
-  
   const chunk  = parseInt(e.parameter.chunk)  || 0;
   const total  = parseInt(e.parameter.total)  || 1;
   const data   = e.parameter.data   || '';
   const batch  = e.parameter.batch  || 'default';
 
-  Logger.log("📥 [saveAllChunk] chunk=" + chunk + "/" + total + ", batch=" + batch + ", dataLen=" + data.length);
-
   const lock = LockService.getScriptLock();
-  try { 
-    lock.waitLock(30000);
-    Logger.log("✅ [saveAllChunk] Script lock acquired");
-  } 
+  try { lock.waitLock(30000); }
   catch(err) {
-    Logger.log("❌ [saveAllChunk] Script lock timeout: " + err.toString());
     return ContentService.createTextOutput(JSON.stringify({success:false, error:'Lock timeout'}))
       .setMimeType(ContentService.MimeType.JSON);
   }
 
   try {
     const props = PropertiesService.getScriptProperties();
-
-    // Store this chunk under a batch-specific key
     props.setProperty('sb_' + batch + '_' + chunk, data);
-    Logger.log("💾 [saveAllChunk] Stored chunk " + chunk + " to PropertiesService");
 
     if (chunk === total - 1) {
-      Logger.log("🔗 [saveAllChunk] Final chunk received. Assembling " + total + " chunks...");
-      
-      // Final chunk — assemble only this batch's chunks
       let assembled = '';
-      const missingChunks = [];
       for (let i = 0; i < total; i++) {
-        const chunkData = props.getProperty('sb_' + batch + '_' + i);
-        if (!chunkData) {
-          missingChunks.push(i);
-          Logger.log("⚠️ [saveAllChunk] Missing chunk " + i);
-        }
-        assembled += chunkData || '';
+        assembled += props.getProperty('sb_' + batch + '_' + i) || '';
       }
-      
-      if (missingChunks.length > 0) {
-        Logger.log("❌ [saveAllChunk] Cannot assemble: missing chunks [" + missingChunks.join(',') + "]");
-        return ContentService.createTextOutput(JSON.stringify({success:false, error:'Missing chunks: ' + missingChunks.join(',')}))
-          .setMimeType(ContentService.MimeType.JSON);
-      }
-      
-      Logger.log("✅ [saveAllChunk] All chunks assembled: " + assembled.length + " chars");
-      
-      // Clean up this batch
       for (let i = 0; i < total; i++) {
         props.deleteProperty('sb_' + batch + '_' + i);
       }
-      // Clean up any old default-key chunks from previous versions
-      for (let i = 0; i < 20; i++) {
-        props.deleteProperty('chunk_' + i);
-      }
 
-      // Validate JSON before writing
-      try {
-        JSON.parse(assembled);
-        Logger.log("✅ [saveAllChunk] JSON is valid");
-      } catch(jsonErr) {
-        Logger.log("❌ [saveAllChunk] JSON invalid: " + jsonErr.toString() + ". First 200 chars: " + assembled.substring(0,200));
-        return ContentService.createTextOutput(JSON.stringify({success:false, error:'Invalid JSON: ' + jsonErr.toString()}))
-          .setMimeType(ContentService.MimeType.JSON);
-      }
+      const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+      const sheet = ss.getSheetByName(SHEET_NAME);
+      sheet.getRange('A1').setValue(assembled);
+      SpreadsheetApp.flush();
 
-      // Save assembled JSON to Sheet
-      try {
-        const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-        Logger.log("✅ [saveAllChunk] Spreadsheet opened");
-        
-        const sheet = ss.getSheetByName(SHEET_NAME);
-        Logger.log("✅ [saveAllChunk] Sheet '" + SHEET_NAME + "' found");
-        
-        const range = sheet.getRange('A1');
-        Logger.log("✅ [saveAllChunk] Range A1 acquired");
-        
-        range.setValue(assembled);
-        Logger.log("✅ [saveAllChunk] setValue() completed");
-        
-        SpreadsheetApp.flush();
-        Logger.log("✅ [saveAllChunk] SpreadsheetApp.flush() completed");
-        
-        // Verify write by reading back
-        const written = range.getValue();
-        const widMatch = written.includes('"_wid"') ? 'YES' : 'NO';
-        Logger.log("✅ [saveAllChunk batch=" + batch + "] Successfully wrote " + assembled.length + " chars to A1. Contains _wid: " + widMatch);
-
-        return ContentService.createTextOutput(JSON.stringify({success:true, saved:true, length:assembled.length}))
-          .setMimeType(ContentService.MimeType.JSON);
-      } catch(sheetErr) {
-        Logger.log("❌ [saveAllChunk] Sheet write error: " + sheetErr.toString());
-        return ContentService.createTextOutput(JSON.stringify({success:false, error:'Sheet error: ' + sheetErr.toString()}))
-          .setMimeType(ContentService.MimeType.JSON);
-      }
+      return ContentService.createTextOutput(JSON.stringify({success:true, saved:true, length:assembled.length}))
+        .setMimeType(ContentService.MimeType.JSON);
     }
 
-    Logger.log("📥 [saveAllChunk] Chunk " + chunk + " stored. Waiting for chunks " + (chunk+1) + " to " + (total-1));
     return ContentService.createTextOutput(JSON.stringify({success:true, saved:false, chunk:chunk}))
       .setMimeType(ContentService.MimeType.JSON);
   } catch(err) {
-    Logger.log("❌ [saveAllChunk] Unexpected error: " + err.toString());
     return ContentService.createTextOutput(JSON.stringify({success:false, error:err.toString()}))
       .setMimeType(ContentService.MimeType.JSON);
   } finally {
     lock.releaseLock();
-    Logger.log("✅ [saveAllChunk] Script lock released");
-  }
-}
-
-// ============= SAVE TO SHEET (doPost handler for saveAll action) =============
-function saveToSheet(data) {
-  try {
-    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-    const sheet = ss.getSheetByName(SHEET_NAME);
-    sheet.getRange('A1').setValue(JSON.stringify(data));
-    SpreadsheetApp.flush();
-    Logger.log('✅ [saveToSheet] Written ' + JSON.stringify(data).length + ' chars to A1 via doPost');
-    return ContentService.createTextOutput(JSON.stringify({success: true, saved: true}))
-      .setMimeType(ContentService.MimeType.JSON);
-  } catch (error) {
-    Logger.log('❌ [saveToSheet] Error: ' + error.toString());
-    return ContentService.createTextOutput(JSON.stringify({success: false, error: error.toString()}))
-      .setMimeType(ContentService.MimeType.JSON);
   }
 }
 
