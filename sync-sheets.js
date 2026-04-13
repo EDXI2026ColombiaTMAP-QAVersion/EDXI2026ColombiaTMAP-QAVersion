@@ -316,8 +316,20 @@ async function _verifySheetSave(expectedJsonStr) {
     const result = await response.json();
     if (!result.values || !result.values[0] || !result.values[0][0]) return false;
     const savedJson = result.values[0][0];
-    const expectedData = _decompressData(JSON.parse(expectedJsonStr));
-    const savedData = _decompressData(JSON.parse(savedJson));
+    let expectedData, savedData;
+    try {
+      expectedData = _decompressData(JSON.parse(expectedJsonStr));
+    } catch (parseErr) {
+      console.error("❌ JSON local inválido — error interno:", parseErr.message);
+      return false;
+    }
+    try {
+      savedData = _decompressData(JSON.parse(savedJson));
+    } catch (parseErr) {
+      console.error("❌ JSON en A1 está corrupto — se reintentará el guardado:", parseErr.message);
+      console.error("   Primeros 200 chars en A1:", savedJson.substring(0, 200));
+      return false; // triggers retry in _sendFullState
+    }
     const expectedSlots = _countAssignedSlots(expectedData);
     const savedSlots = _countAssignedSlots(savedData);
     const ok = expectedSlots === savedSlots;
@@ -325,8 +337,9 @@ async function _verifySheetSave(expectedJsonStr) {
     else console.warn(`⚠️ Verificación: esperado ${expectedSlots} slots, Sheet tiene ${savedSlots}`);
     return ok;
   } catch (e) {
-    console.warn("⚠️ No se pudo verificar el guardado:", e.message);
-    return true; // don't block on network error during verify
+    // Only skip verification for genuine network errors — do not mask data corruption
+    console.warn("⚠️ Error de red al verificar guardado (se asume OK):", e.message);
+    return true;
   }
 }
 

@@ -247,12 +247,38 @@ function saveAllChunk(e) {
     props.setProperty('sb_' + batch + '_' + chunk, data);
 
     if (chunk === total - 1) {
+      // Check all chunks arrived before assembling
+      const missingChunks = [];
+      for (let i = 0; i < total; i++) {
+        if (!props.getProperty('sb_' + batch + '_' + i)) missingChunks.push(i);
+      }
+      if (missingChunks.length > 0) {
+        // Clean up partial batch
+        for (let i = 0; i < total; i++) props.deleteProperty('sb_' + batch + '_' + i);
+        return ContentService.createTextOutput(JSON.stringify({
+          success: false,
+          error: 'Chunks faltantes: [' + missingChunks.join(',') + '] de ' + total + ' totales'
+        })).setMimeType(ContentService.MimeType.JSON);
+      }
+
       let assembled = '';
       for (let i = 0; i < total; i++) {
         assembled += props.getProperty('sb_' + batch + '_' + i) || '';
       }
       for (let i = 0; i < total; i++) {
         props.deleteProperty('sb_' + batch + '_' + i);
+      }
+
+      // Validate JSON integrity before writing to A1 — prevents corrupt data
+      try {
+        JSON.parse(assembled);
+      } catch (parseErr) {
+        return ContentService.createTextOutput(JSON.stringify({
+          success: false,
+          error: 'JSON ensamblado inválido: ' + parseErr.message.substring(0, 120),
+          assembled_length: assembled.length,
+          first_100: assembled.substring(0, 100)
+        })).setMimeType(ContentService.MimeType.JSON);
       }
 
       const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
