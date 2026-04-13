@@ -65,7 +65,7 @@ function getDataFromCell() {
   try {
     const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
     const sheet = ss.getSheetByName(SHEET_NAME);
-    const cellValue = sheet.getRange('B1').getValue();
+    const cellValue = sheet.getRange('A1').getValue();
     
     if (!cellValue || cellValue === '') {
       Logger.log('⚠️ Cell A1 is empty');
@@ -93,7 +93,7 @@ function saveDataToCell(data) {
   try {
     const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
     const sheet = ss.getSheetByName(SHEET_NAME);
-    sheet.getRange('B1').setValue(JSON.stringify(data));
+    sheet.getRange('A1').setValue(JSON.stringify(data));
     SpreadsheetApp.flush();
     Logger.log('✓ Data saved to cell A1');
     return true;
@@ -235,9 +235,12 @@ function saveAllChunk(e) {
   const data   = e.parameter.data   || '';
   const batch  = e.parameter.batch  || 'default';
 
+  Logger.log("📥 [saveAllChunk] Recibido chunk " + chunk + "/" + total + ", batch=" + batch + ", dataLen=" + data.length);
+
   const lock = LockService.getScriptLock();
   try { lock.waitLock(30000); }
   catch(err) {
+    Logger.log("❌ [saveAllChunk] Timeout en lock");
     return ContentService.createTextOutput(JSON.stringify({success:false, error:'Lock timeout'}))
       .setMimeType(ContentService.MimeType.JSON);
   }
@@ -245,28 +248,56 @@ function saveAllChunk(e) {
   try {
     const props = PropertiesService.getScriptProperties();
     props.setProperty('sb_' + batch + '_' + chunk, data);
+    Logger.log("💾 [saveAllChunk] Guardado chunk " + chunk + " en PropertiesService");
 
     if (chunk === total - 1) {
+      Logger.log("🔗 [saveAllChunk] Es el último chunk. Ensamblando " + total + " chunks...");
+      
       let assembled = '';
+      const missingChunks = [];
       for (let i = 0; i < total; i++) {
-        assembled += props.getProperty('sb_' + batch + '_' + i) || '';
+        const chunkData = props.getProperty('sb_' + batch + '_' + i);
+        if (!chunkData) {
+          missingChunks.push(i);
+          Logger.log("⚠️  [saveAllChunk] FALTA chunk " + i);
+        } else {
+          assembled += chunkData;
+          Logger.log("✅ [saveAllChunk] Chunk " + i + " añadido, total hasta ahora: " + assembled.length + " chars");
+        }
       }
+      
+      if (missingChunks.length > 0) {
+        Logger.log("❌ [saveAllChunk] Faltan chunks: " + missingChunks.join(','));
+        return ContentService.createTextOutput(JSON.stringify({success:false, error:'Missing chunks'}))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      
+      Logger.log("✅ [saveAllChunk] Ensamblado OK: " + assembled.length + " chars total");
+      Logger.log("📋 [saveAllChunk] Primeros 100 chars: " + assembled.substring(0, 100));
+      
+      // Limpiar chunks
       for (let i = 0; i < total; i++) {
         props.deleteProperty('sb_' + batch + '_' + i);
       }
 
+      // Escribir a A1
       const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
       const sheet = ss.getSheetByName(SHEET_NAME);
-      sheet.getRange('B1').setValue(assembled);
+      sheet.getRange('A1').setValue(assembled);
       SpreadsheetApp.flush();
+      
+      const written = sheet.getRange('A1').getValue();
+      Logger.log("✅ [saveAllChunk] Escrito en A1: " + written.substring(0, 100) + "... (" + written.length + " chars)");
 
       return ContentService.createTextOutput(JSON.stringify({success:true, saved:true, length:assembled.length}))
         .setMimeType(ContentService.MimeType.JSON);
     }
 
+    Logger.log("📥 [saveAllChunk] Chunk " + chunk + " guardado, esperando más");
     return ContentService.createTextOutput(JSON.stringify({success:true, saved:false, chunk:chunk}))
       .setMimeType(ContentService.MimeType.JSON);
   } catch(err) {
+    Logger.log("❌ [saveAllChunk] Error: " + err.toString());
     return ContentService.createTextOutput(JSON.stringify({success:false, error:err.toString()}))
       .setMimeType(ContentService.MimeType.JSON);
   } finally {
@@ -279,7 +310,7 @@ function saveDayData(day, data) {
   try {
     const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
     const sheet = ss.getSheetByName(SHEET_NAME);
-    const cell = sheet.getRange("B1");
+    const cell = sheet.getRange("A1");
     let fullData = {};
     if (cell.getValue()) {
       try { fullData = JSON.parse(cell.getValue()); } catch (e) { fullData = {}; }

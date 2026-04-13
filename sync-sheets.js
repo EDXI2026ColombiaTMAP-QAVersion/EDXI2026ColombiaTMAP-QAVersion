@@ -1,7 +1,7 @@
 // Google Sheets Configuration
 const SHEET_ID = "1aZQlQdszET32S_pM8et-L_T0tA6CZ-4uFKPuCWz3Vxo";
 const SHEET_NAME = "assignments";
-const SHEET_RANGE = "B1";
+const SHEET_RANGE = "A1";
 
 // Google Sheets API Key
 let API_KEY = null;
@@ -20,7 +20,7 @@ async function loadDataFromSheet() {
     }
     
     const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${SHEET_NAME}!${SHEET_RANGE}?key=${API_KEY}`;
-    console.log("🔵 [loadDataFromSheet] Leyendo desde " + SHEET_RANGE);
+    console.log("🔵 [loadDataFromSheet] Leyendo desde A1");
     const response = await fetch(url, { cache: 'no-store' });
     
     if (!response.ok) {
@@ -28,7 +28,7 @@ async function loadDataFromSheet() {
     }
     
     const result = await response.json();
-    console.log("🔵 [loadDataFromSheet] Resultado:", result.values ? ("datos en " + SHEET_RANGE) : "vacío");
+    console.log("🔵 [loadDataFromSheet] Resultado:", result.values ? ("datos en A1") : "vacío");
     let members = [];
     let brands = [];
     let assignments = {};
@@ -60,7 +60,7 @@ async function loadDataFromSheet() {
       }
       console.log("✅ Datos cargados del Sheet: " + members.length + " miembros, " + brands.length + " marcas, " + Object.keys(assignments).length + " días");
     } else {
-      console.warn("⚠️ Celda B1 vacía — se inicializará con datos en blanco");
+      console.warn("⚠️ Celda A1 vacía — se inicializará con datos en blanco");
     }
 
     window.PRELOADED_DATA = { members, brands, assignments, memberDetails };
