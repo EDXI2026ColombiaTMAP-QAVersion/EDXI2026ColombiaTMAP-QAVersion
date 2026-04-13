@@ -138,6 +138,10 @@ function init() {
   if (PRELOADED?.assignments) {
     mergeSheetIntoState(state, PRELOADED, defaultMembers);
   }
+  // Ensure memberDetails always exists
+  if (!state.memberDetails) {
+    state.memberDetails = {};
+  }
   selectedBrandId = state.selectedBrandId || state.brands[0]?.id || null;
 
   // Initialize DOM elements
@@ -332,6 +336,11 @@ function loadStateFromStorage(defaultBrands) {
     const parsed = JSON.parse(raw);
     if (!parsed?.members || !parsed?.brands || !parsed?.assignments) return null;
 
+    // Ensure memberDetails exists
+    if (!parsed.memberDetails) {
+      parsed.memberDetails = {};
+    }
+
     for (const day of allWeekdays) {
       parsed.assignments[day.key] ||= {};
       for (const member of parsed.members) {
@@ -350,6 +359,11 @@ function loadStateFromStorage(defaultBrands) {
  * New members from Sheet are added, assignments from Sheet overwrite localStorage.
  */
 function mergeSheetIntoState(state, PRELOADED, defaultMembers) {
+  // Ensure memberDetails exists
+  if (!state.memberDetails) {
+    state.memberDetails = {};
+  }
+
   // Merge members: add any from Sheet that aren't already in state
   for (const m of defaultMembers) {
     if (!state.members.includes(m)) {
