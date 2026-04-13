@@ -239,12 +239,11 @@ async function _flushPendingDays(state) {
 }
 
 /**
- * Send full state. Tries POST first; if that fails (302 redirect issue),
- * falls back to GET-based saveAll using chunked approach.
+ * Send full state in a single POST request (no chunking needed)
  */
 async function _sendFullState(state) {
-  // Log what we're about to send
-  console.log("🔍 [_sendFullState] state.brands:", state.brands);
+  console.log("🔍 [_sendFullState] state.members:", state.members.length);
+  console.log("🔍 [_sendFullState] state.brands:", state.brands.length);
   console.log("🔍 [_sendFullState] state.assignments keys:", Object.keys(state.assignments || {}).length);
   
   // Build complete data
@@ -258,42 +257,39 @@ async function _sendFullState(state) {
   for (const key of Object.keys(state.assignments)) {
     fullData.assignments[key] = state.assignments[key];
   }
-  const jsonStr = JSON.stringify(_compressData(fullData));
-  console.log("📤 Datos: " + Math.round(jsonStr.length / 1024) + "KB (comprimido)");
+  
+  const compressed = _compressData(fullData);
+  const jsonStr = JSON.stringify(compressed);
+  console.log("📤 Datos: " + Math.round(jsonStr.length / 1024) + "KB (comprimido), " + jsonStr.length + " chars");
 
-  const CHUNK_SIZE = 1000;
-  const totalChunks = Math.ceil(jsonStr.length / CHUNK_SIZE);
+  // Send everything in a single POST request (no chunking)
+  try {
+    const response = await fetch(WEB_APP_URL + "?action=saveAll", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: jsonStr
+    });
 
-  // Retry the full send+verify cycle up to 3 times
-  for (let attempt = 0; attempt < 3; attempt++) {
-    if (attempt > 0) {
-      console.log("🔄 Reintento " + attempt + "/2...");
-      await new Promise(r => setTimeout(r, 1500));
+    if (!response.ok) {
+      console.error("❌ HTTP error:", response.status);
+      return { ok: false, error: "HTTP " + response.status };
     }
 
-    // Use a unique batch ID so the Apps Script can discard stale chunks
-    // from any previous failed/partial sync
-    const batchId = Date.now().toString();
-
-    let sendOk = true;
-    for (let i = 0; i < totalChunks; i++) {
-      const chunk = jsonStr.substring(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
-      const result = await _sendGetSaveAll(chunk, i, totalChunks, batchId);
-      if (!result.ok) { sendOk = false; break; }
-      if (i < totalChunks - 1) {
-        await new Promise(r => setTimeout(r, 500));
-      }
+    const result = await response.json();
+    
+    if (result.success) {
+      console.log("✅ Guardado exitoso via POST: " + jsonStr.length + " caracteres");
+      return { ok: true };
+    } else {
+      console.error("❌ Respuesta POST negativa:", result.error);
+      return { ok: false, error: result.error || "Unknown error" };
     }
-
-    if (!sendOk) continue;
-
-    // If all chunks sent successfully, trust Apps Script wrote them correctly
-    // Don't verify via Sheets API because it caches reads for 30-60 seconds
-    console.log("✅ Todos los chunks enviados a Apps Script correctamente");
-    return { ok: true };
+  } catch (error) {
+    console.error("❌ Error en _sendFullState:", error.message);
+    return { ok: false, error: error.message };
   }
-
-  return { ok: false, error: "No se pudo enviar los chunks a Apps Script" };
 }
 
 // DEPRECATED: This verification is no longer used because Sheets API caches reads for 30-60 seconds,
@@ -321,35 +317,6 @@ async function _verifySheetSave(expectedJsonStr) {
   }
 }
 */
-
-async function _sendGetSaveAll(data, chunkIndex, totalChunks, batchId) {
-  try {
-    const url = WEB_APP_URL
-      + "?action=saveAllChunk"
-      + "&batch=" + encodeURIComponent(batchId)
-      + "&chunk=" + chunkIndex
-      + "&total=" + totalChunks
-      + "&data=" + encodeURIComponent(data);
-
-    // Use redirect:'manual' so we intercept Apps Script's 302 redirect instead of
-    // following it to the echo URL (which returns 400 due to CORS/URL issues).
-    // An opaqueredirect means Apps Script received and processed the request successfully.
-    const response = await fetch(url, { redirect: "manual" });
-    if (response.type === "opaqueredirect") {
-      return { ok: true };
-    }
-    const text = await response.text();
-    try {
-      const json = JSON.parse(text);
-      if (json.success) return { ok: true };
-      return { ok: false, error: json.error || "Unknown" };
-    } catch {
-      return { ok: false, error: "Non-JSON: " + text.substring(0, 100) };
-    }
-  } catch (error) {
-    return { ok: false, error: error.message };
-  }
-}
 
 // Full sync helper
 async function fullSyncToSheet() {

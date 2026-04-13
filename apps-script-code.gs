@@ -34,8 +34,18 @@ function doGet(e) {
 
 function doPost(e) {
   try {
-    // Parse the JSON from the POST body (sent as text/plain to avoid CORS)
+    // Parse the JSON from the POST body
     const data = JSON.parse(e.postData.contents);
+    
+    // Check if this is the compressed data format (direct save)
+    if (data._v === 2 && data.members !== undefined && data.brands !== undefined) {
+      // This is compressed data sent directly - save it as-is
+      Logger.log('📥 [doPost] Recibido JSON comprimido, guardando...');
+      saveDataToCell(data);
+      return ContentService.createTextOutput(JSON.stringify({success: true, message: 'Data saved'})).setMimeType(ContentService.MimeType.JSON);
+    }
+    
+    // Otherwise check for action field
     const action = data.action;
     
     if (action === 'saveData') {
@@ -55,7 +65,7 @@ function doPost(e) {
     }
     return ContentService.createTextOutput(JSON.stringify({error: 'Invalid action'})).setMimeType(ContentService.MimeType.JSON);
   } catch (error) {
-    Logger.log('Error in doPost: ' + error.toString());
+    Logger.log('❌ Error in doPost: ' + error.toString());
     return ContentService.createTextOutput(JSON.stringify({success: false, error: error.toString()})).setMimeType(ContentService.MimeType.JSON);
   }
 }
