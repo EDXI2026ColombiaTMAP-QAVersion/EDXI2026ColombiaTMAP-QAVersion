@@ -29,6 +29,7 @@ async function loadDataFromSheet() {
     
     const result = await response.json();
     console.log("🔵 [loadDataFromSheet] Resultado:", result.values ? ("datos en " + SHEET_RANGE) : "vacío");
+    let members = [];
     let brands = [];
     let assignments = {};
     let memberDetails = {};
