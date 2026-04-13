@@ -282,32 +282,18 @@ async function _sendFullState(state) {
 
     if (!sendOk) continue;
 
-    // Wait for Apps Script to flush PropertiesService assembly and write to Sheet
-    await new Promise(r => setTimeout(r, 4000));
-    const verified = await _verifySheetSave(jsonStr);
-    if (verified) return { ok: true };
-    console.warn("⚠️ Verificación falló (intento " + (attempt + 1) + "/3)");
+    // If all chunks sent successfully, trust Apps Script wrote them correctly
+    // Don't verify via Sheets API because it caches reads for 30-60 seconds
+    console.log("✅ Todos los chunks enviados a Apps Script correctamente");
+    return { ok: true };
   }
 
-  return { ok: false, error: "Verification failed after 3 attempts" };
+  return { ok: false, error: "No se pudo enviar los chunks a Apps Script" };
 }
 
-function _countAssignedSlots(data) {
-  let count = 0;
-  for (const dayKey of Object.keys(data.assignments || {})) {
-    if (dayKey === '_config') continue;
-    for (const member of Object.keys(data.assignments[dayKey])) {
-      const slots = data.assignments[dayKey][member];
-      if (Array.isArray(slots)) {
-        for (const slot of slots) {
-          if (slot && slot !== 'LUNCH') count++;
-        }
-      }
-    }
-  }
-  return count;
-}
-
+// DEPRECATED: This verification is no longer used because Sheets API caches reads for 30-60 seconds,
+// making post-write verification unreliable. We now trust Apps Script's successful response.
+/*
 async function _verifySheetSave(expectedJsonStr) {
   try {
     const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${SHEET_NAME}!${SHEET_RANGE}?key=${API_KEY}`;
@@ -329,6 +315,7 @@ async function _verifySheetSave(expectedJsonStr) {
     return true; // don't block on network error during verify
   }
 }
+*/
 
 async function _sendGetSaveAll(data, chunkIndex, totalChunks, batchId) {
   try {
