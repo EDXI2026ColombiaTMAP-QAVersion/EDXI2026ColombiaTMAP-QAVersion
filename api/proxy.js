@@ -1,7 +1,7 @@
 // Proxy CORS para Google Apps Script
 // Desplegado en Vercel
 
-const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbz0OP__V0k599b2bEoAsdzWFANMpatkVopl0hyrzRQIsxcCsixVyDGGVvK4XTooj80Wcw/exec';
+const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbzNr6NccrbC2epUrfcUrtuHGzfhvI3-AV2_ZSrAsTQKM35-jwzIiQdJYyAN7r3W6xJpvg/exec';
 
 export default async function handler(req, res) {
   // Enable CORS
