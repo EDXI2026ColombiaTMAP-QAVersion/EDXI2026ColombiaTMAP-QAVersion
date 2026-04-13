@@ -1051,14 +1051,17 @@ async function exportScheduleToNewExcel() {
       };
     };
 
-    // Iterate through all days
-    for (const dayKey of Object.keys(state.assignments).sort()) {
-      if (dayKey === '_config') continue; // Skip config
-      
-      const dayAssignments = state.assignments[dayKey];
-      
-      // Iterate through all members
-      for (const member of state.members) {
+    // Sort days chronologically
+    const sortedDays = Object.keys(state.assignments)
+      .filter(key => key !== '_config')
+      .sort();
+
+    // Iterate through members (sorted)
+    for (const member of state.members) {
+      // Then iterate through all days for this member
+      for (const dayKey of sortedDays) {
+        const dayAssignments = state.assignments[dayKey];
+        
         if (!dayAssignments[member]) continue;
         
         const memberSlots = dayAssignments[member];
