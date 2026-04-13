@@ -38,6 +38,7 @@ async function loadDataFromSheet() {
       members = Array.isArray(sheetData.members) ? sheetData.members : [];
       brands = Array.isArray(sheetData.brands) ? sheetData.brands : [];
       assignments = sheetData.assignments || {};
+      const memberDetails = sheetData.memberDetails || {};
       // Also check if members/brands were saved inside assignments as _config
       if (assignments._config) {
         if (Array.isArray(assignments._config.members) && assignments._config.members.length) members = assignments._config.members;
@@ -60,7 +61,7 @@ async function loadDataFromSheet() {
       console.warn("⚠️ Celda A1 vacía — se inicializará con datos en blanco");
     }
 
-    window.PRELOADED_DATA = { members, brands, assignments };
+    window.PRELOADED_DATA = { members, brands, assignments, memberDetails };
     return true;
     
   } catch (error) {
@@ -244,6 +245,7 @@ async function _sendFullState(state) {
   const fullData = {
     members: state.members,
     brands: state.brands,
+    memberDetails: state.memberDetails || {},
     assignments: {}
   };
   fullData.assignments._config = { members: state.members, brands: state.brands };

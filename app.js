@@ -364,6 +364,13 @@ function mergeSheetIntoState(state, PRELOADED, defaultMembers) {
     state.memberDetails = {};
   }
 
+  // Merge memberDetails from Sheet (Sheet wins — it has the latest saved IDs)
+  if (PRELOADED.memberDetails) {
+    for (const [member, details] of Object.entries(PRELOADED.memberDetails)) {
+      state.memberDetails[member] = { ...(state.memberDetails[member] || {}), ...details };
+    }
+  }
+
   // Merge members: add any from Sheet that aren't already in state
   for (const m of defaultMembers) {
     if (!state.members.includes(m)) {
@@ -1286,6 +1293,7 @@ function openMemberModal(prefillName = "", prefillId = "") {
   memberModalName.value = prefillName;
   memberModalName.disabled = false;
   memberModalId.value = prefillId;
+  memberModalId.placeholder = isEdit && prefillId ? prefillId : "e.g. 010101";
   // Update title dynamically
   memberModal.querySelector("h3").textContent = isEdit ? "Edit Team Member" : "Add Team Member";
   memberModal.hidden = false;
