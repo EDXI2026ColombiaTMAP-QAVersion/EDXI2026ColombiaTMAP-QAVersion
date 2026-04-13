@@ -3,6 +3,18 @@
         "git add": true,
         "git commit": true,
         "git remote": true,
-        "git push": true
+        "git push": true,
+        "/^cd \"c:\\\\Users\\\\E072168\\\\OneDrive - Daniel J\\. Edelman Holdings, Inc\\\\Escritorio\\\\DXI_Colombia\"; python -c \"\nimport openpyxl\nwb = openpyxl\\.load_workbook\\('2026 - Timing_Map_DXI \\(1\\)\\.xlsx', read_only=True\\)\nprint\\('Sheets:', wb\\.sheetnames\\)\nfor sh in wb\\.sheetnames\\[:3\\]:\n    ws = wb\\[sh\\]\n    print\\(f'\\\\n--- Sheet: \\{sh\\} \\(max_row=\\{ws\\.max_row\\}, max_col=\\{ws\\.max_column\\}\\) ---'\\)\n    for row in ws\\.iter_rows\\(min_row=1, max_row=5, values_only=True\\):\n        print\\(row\\)\n\"\n$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^cd \"c:\\\\Users\\\\E072168\\\\OneDrive - Daniel J\\. Edelman Holdings, Inc\\\\Escritorio\\\\DXI_Colombia\"; python -c \"\nimport openpyxl\nwb = openpyxl\\.load_workbook\\('2026 - Timing_Map_DXI \\(1\\)\\.xlsx', read_only=True\\)\nws = wb\\['Timing APR'\\]\nprint\\('Sheet APR, max_row=%d, max_col=%d' % \\(ws\\.max_row, ws\\.max_column\\)\\)\n# Find first non-empty rows\ncount = 0\nfor i, row in enumerate\\(ws\\.iter_rows\\(min_row=1, max_row=50, values_only=True\\), 1\\):\n    cells = \\[c for c in row if c is not None\\]\n    if cells:\n        print\\(f'Row \\{i\\}: \\{cells\\[:15\\]\\}'\\)\n        count \\+= 1\n        if count > 20:\n            break\n\"\n$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^cd \"c:\\\\Users\\\\E072168\\\\OneDrive - Daniel J\\. Edelman Holdings, Inc\\\\Escritorio\\\\DXI_Colombia\"; python -c \"\nimport openpyxl\nwb = openpyxl\\.load_workbook\\('2026 - Timing_Map_DXI \\(1\\)\\.xlsx', read_only=True\\)\nws = wb\\['Timing APR'\\]\n\n# Row 18: week headers \\(col 1=FIRST WEEK, col 3=MONDAY 30, etc\\)\n# Row 19: hour numbers\n# Members are in odd rows starting from 21, col 1=name, col 2=DAY\n# Let's print row 18 and 19 fully to understand the time/date mapping\nrow18 = list\\(ws\\.iter_rows\\(min_row=18, max_row=18, values_only=True\\)\\)\\[0\\]\nrow19 = list\\(ws\\.iter_rows\\(min_row=19, max_row=19, values_only=True\\)\\)\\[0\\]\nfor col_idx, \\(h, t\\) in enumerate\\(zip\\(row18, row19\\)\\):\n    if h is not None or t is not None:\n        print\\(f'Col \\{col_idx\\}: header=\\{h!r\\} time=\\{t!r\\}'\\)\n\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
     }
 }
