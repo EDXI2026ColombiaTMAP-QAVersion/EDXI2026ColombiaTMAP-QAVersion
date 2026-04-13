@@ -1007,81 +1007,85 @@ async function exportScheduleToNewExcel() {
 
     const workbook = await window.XlsxPopulate.fromBlankAsync();
     const sheet = workbook.sheet(0);
-    sheet.name("Summary");
+    sheet.name("Schedule");
 
-    // Build column headers: Team Member, Client, then "MonthName Hours" for each month
-    const monthLabels = MONTHS.map(m => {
-      const date = new Date(m.year, m.month, 1);
-      const monthName = date.toLocaleDateString("en-US", { month: "short" });
-      return monthName;
-    });
-
+    // Headers
     sheet.cell("A1").value("Team Member").style("bold", true).style("fill", "D3D3D3");
     sheet.cell("B1").value("Member ID").style("bold", true).style("fill", "D3D3D3");
     sheet.cell("C1").value("Client").style("bold", true).style("fill", "D3D3D3");
     sheet.cell("D1").value("Billing Code").style("bold", true).style("fill", "D3D3D3");
-    for (let i = 0; i < monthLabels.length; i++) {
-      sheet.cell(1, i + 5).value(`${monthLabels[i]} Hours`).style("bold", true).style("fill", "D3D3D3");
-    }
+    sheet.cell("E1").value("Start time").style("bold", true).style("fill", "D3D3D3");
+    sheet.cell("F1").value("End time").style("bold", true).style("fill", "D3D3D3");
+    sheet.cell("G1").value("Hours").style("bold", true).style("fill", "D3D3D3");
 
     // Set column widths
     sheet.column("A").width(25);
-    sheet.column("B").width(20);
-    sheet.column("C").width(35);
-    sheet.column("D").width(20);
-    for (let i = 0; i < monthLabels.length; i++) {
-      sheet.column(i + 5).width(12);
-    }
+    sheet.column("B").width(15);
+    sheet.column("C").width(20);
+    sheet.column("D").width(15);
+    sheet.column("E").width(12);
+    sheet.column("F").width(12);
+    sheet.column("G").width(10);
 
     let rowNum = 2;
     const brandById = new Map(state.brands.map((b) => [b.id, b]));
 
-    // For each team member
-    for (const member of state.members) {
-      // Collect all brands this member is assigned to
-      const memberBrands = new Map(); // brandId -> brand object
-      for (const month of MONTHS) {
-        const monthDays = buildMonthWeekdays(month.year, month.month);
-        for (const day of monthDays) {
-          if (day.foreign || isHoliday(day.key)) continue;
-          const assignments = state.assignments[day.key]?.[member] || [];
-          for (const brandId of assignments) {
-            if (brandId && brandId !== "LUNCH") {
-              if (!memberBrands.has(brandId)) {
-                memberBrands.set(brandId, brandById.get(brandId));
-              }
-            }
-          }
+    // Helper function to convert slot index to time
+    const getSlotTime = (slotIndex) => {
+      const OPEN_HOUR = 7;
+      const OPEN_MIN = 0;
+      const SLOT_DURATION = 30; // minutes
+      
+      let totalMinutes = OPEN_HOUR * 60 + OPEN_MIN + (slotIndex * SLOT_DURATION);
+      const startHour = Math.floor(totalMinutes / 60);
+      const startMin = totalMinutes % 60;
+      
+      const endMinutes = totalMinutes + SLOT_DURATION;
+      const endHour = Math.floor(endMinutes / 60);
+      const endMin = endMinutes % 60;
+      
+      const pad = (n) => String(n).padStart(2, '0');
+      return {
+        start: `${pad(startHour)}:${pad(startMin)}`,
+        end: `${pad(endHour)}:${pad(endMin)}`
+      };
+    };
+
+    // Iterate through all days
+    for (const dayKey of Object.keys(state.assignments).sort()) {
+      if (dayKey === '_config') continue; // Skip config
+      
+      const dayAssignments = state.assignments[dayKey];
+      
+      // Iterate through all members
+      for (const member of state.members) {
+        if (!dayAssignments[member]) continue;
+        
+        const memberSlots = dayAssignments[member];
+        
+        // Iterate through all slots for this member on this day
+        for (let slotIdx = 0; slotIdx < memberSlots.length; slotIdx++) {
+          const brandId = memberSlots[slotIdx];
+          
+          // Skip empty slots and lunch
+          if (!brandId || brandId === "LUNCH" || brandId === ".") continue;
+          
+          const brand = brandById.get(brandId);
+          if (!brand) continue;
+          
+          const slotTime = getSlotTime(slotIdx);
+          
+          // Add row
+          sheet.cell(`A${rowNum}`).value(member);
+          sheet.cell(`B${rowNum}`).value(state.memberDetails?.[member]?.memberId || "");
+          sheet.cell(`C${rowNum}`).value(brand.name || "");
+          sheet.cell(`D${rowNum}`).value(brand.billingCode || "");
+          sheet.cell(`E${rowNum}`).value(slotTime.start);
+          sheet.cell(`F${rowNum}`).value(slotTime.end);
+          sheet.cell(`G${rowNum}`).value(0.5); // Each slot is 30 min = 0.5 hours
+          
+          rowNum++;
         }
-      }
-
-      // For each brand this member has
-      for (const [brandId, brand] of memberBrands) {
-        sheet.cell(`A${rowNum}`).value(member);
-        sheet.cell(`B${rowNum}`).value(state.memberDetails?.[member]?.memberId || "");
-        sheet.cell(`C${rowNum}`).value(brand?.name || "");
-        sheet.cell(`D${rowNum}`).value(brand?.billingCode || "");
-
-        // Calculate hours for each month
-        for (let mIdx = 0; mIdx < MONTHS.length; mIdx++) {
-          const month = MONTHS[mIdx];
-          const monthDays = buildMonthWeekdays(month.year, month.month);
-          let monthHours = 0;
-
-          for (const day of monthDays) {
-            if (day.foreign || isHoliday(day.key)) continue;
-            const assignments = state.assignments[day.key]?.[member] || [];
-            for (let slotIdx = 0; slotIdx < assignments.length; slotIdx++) {
-              if (assignments[slotIdx] === brandId) {
-                monthHours += 0.5; // Each slot is 30 min = 0.5 hours
-              }
-            }
-          }
-
-          sheet.cell(rowNum, mIdx + 5).value(monthHours > 0 ? monthHours : 0);
-        }
-
-        rowNum++;
       }
     }
 
