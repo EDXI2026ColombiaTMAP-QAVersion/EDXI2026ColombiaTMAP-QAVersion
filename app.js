@@ -204,7 +204,7 @@ function init() {
   renderMonthTabs();
   updateScheduleTitle();
   applyTotalsCollapse(safeStorage.getItem("dxi-totals-collapsed") === "1");
-  applyLegendCollapse(safeStorage.getItem("dxi-legend-collapsed") === "1");
+  applyLegendCollapse(safeStorage.getItem("dxi-legend-collapsed") !== "0");  // Default collapsed (true)
   renderPalette();
   renderTable();
   renderTotals();
