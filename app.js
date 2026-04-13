@@ -133,11 +133,19 @@ let _memberModalResolve = null;
 function init() {
   // Resolve state from Sheet data (now available) + localStorage
   const { members: defaultMembers, brands: defaultBrands, pre: PRELOADED } = resolveDefaults();
-  state = loadStateFromStorage(defaultBrands) || createInitialState(defaultMembers, defaultBrands, PRELOADED);
-  // Always merge fresh Sheet assignments into state (Sheet is source of truth)
-  if (PRELOADED?.assignments) {
-    mergeSheetIntoState(state, PRELOADED, defaultMembers);
+  
+  // SHEET IS SOURCE OF TRUTH: If Sheet has any data, use it exclusively
+  if (PRELOADED && (PRELOADED.members?.length > 0 || PRELOADED.brands?.length > 0 || PRELOADED.assignments && Object.keys(PRELOADED.assignments).length > 0)) {
+    state = createInitialState(PRELOADED.members || [], PRELOADED.brands || [], PRELOADED);
+  } else {
+    // Only if Sheet is empty, fall back to localStorage
+    state = loadStateFromStorage(defaultBrands) || createInitialState(defaultMembers, defaultBrands, PRELOADED);
+    // If we loaded from localStorage but Sheet has new data, merge it
+    if (PRELOADED?.assignments) {
+      mergeSheetIntoState(state, PRELOADED, defaultMembers);
+    }
   }
+  
   // Ensure memberDetails always exists
   if (!state.memberDetails) {
     state.memberDetails = {};
