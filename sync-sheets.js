@@ -10,10 +10,60 @@ let API_KEY = null;
 let WEB_APP_URL = null;
 
 /**
- * Fetches data from Google Sheet using Sheets API
- * All data (members, brands, assignments) comes from the Sheet
+ * Fetches data directly from Apps Script (no API caching)
+ * Reads cell A1 directly from the Sheet, not via Google Sheets API
  */
 async function loadDataFromSheet() {
+  try {
+    if (!WEB_APP_URL) {
+      console.warn("⚠️ Web App URL no configurada, usando Sheets API");
+      return loadDataViaAPI();
+    }
+    
+    // Fetch directly from Apps Script (no API caching)
+    const url = WEB_APP_URL + "?action=getFullData&t=" + Date.now();
+    const response = await fetch(url, { cache: 'no-store' });
+    
+    if (!response.ok) {
+      console.warn("⚠️ Apps Script read failed, falling back to Sheets API");
+      return loadDataViaAPI();
+    }
+    
+    const result = await response.json();
+    
+    if (!result || !result.data) {
+      console.warn("⚠️ No data from Apps Script");
+      window.PRELOADED_DATA = { members: [], brands: [], assignments: {} };
+      return false;
+    }
+    
+    const sheetData = _decompressData(result.data);
+    const members = Array.isArray(sheetData.members) ? sheetData.members : [];
+    const brands = Array.isArray(sheetData.brands) ? sheetData.brands : [];
+    let assignments = sheetData.assignments || {};
+    const memberDetails = sheetData.memberDetails || {};
+    
+    // Extract members/brands from _config if present
+    if (assignments._config) {
+      if (Array.isArray(assignments._config.members)) Object.assign(members, assignments._config.members);
+      if (Array.isArray(assignments._config.brands)) Object.assign(brands, assignments._config.brands);
+      delete assignments._config;
+    }
+    
+    window.PRELOADED_DATA = { members, brands, assignments, memberDetails };
+    console.log("✅ Datos cargados del Sheet (via Apps Script): " + members.length + " miembros, " + brands.length + " marcas, " + Object.keys(assignments).length + " días");
+    return true;
+    
+  } catch (error) {
+    console.error("❌ Error al cargar Sheet:", error.message);
+    return loadDataViaAPI();
+  }
+}
+
+/**
+ * Fallback: Load via Sheets API (slower, may return cached data)
+ */
+async function loadDataViaAPI() {
   try {
     if (!API_KEY) {
       throw new Error("API Key no configurada");
@@ -57,7 +107,7 @@ async function loadDataFromSheet() {
         members = [...memberSet];
         console.log("✅ Members extraídos de assignments (fallback): " + members.length);
       }
-      console.log("✅ Datos cargados del Sheet: " + members.length + " miembros, " + brands.length + " marcas, " + Object.keys(assignments).length + " días");
+      console.log("✅ Datos cargados del Sheet (API): " + members.length + " miembros, " + brands.length + " marcas, " + Object.keys(assignments).length + " días");
     } else {
       console.warn("⚠️ Celda A1 vacía — se inicializará con datos en blanco");
     }
@@ -66,7 +116,7 @@ async function loadDataFromSheet() {
     return true;
     
   } catch (error) {
-    console.error("❌ Error al cargar Sheet:", error.message);
+    console.error("❌ Error al cargar Sheet (API fallback):", error.message);
     window.PRELOADED_DATA = { members: [], brands: [], assignments: {} };
     console.warn("⚠️ Sheet no disponible — datos vacíos");
     return false;

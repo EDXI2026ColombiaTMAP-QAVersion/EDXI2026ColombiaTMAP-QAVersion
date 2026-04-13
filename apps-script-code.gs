@@ -2,48 +2,31 @@ const SPREADSHEET_ID = '1aZQlQdszET32S_pM8et-L_T0tA6CZ-4uFKPuCWz3Vxo';
 const SHEET_NAME = 'assignments';
 
 function doPost(e) {
-  Logger.log("🔵 [doPost] Called");
   const lock = LockService.getDocumentLock();
-  try {
-    lock.waitLock(30000);
-  } catch(lockErr) {
-    Logger.log("❌ [doPost] Document lock timeout: " + lockErr.toString());
-    return ContentService.createTextOutput(JSON.stringify({success:false, error:'Lock timeout'}))
-      .setMimeType(ContentService.MimeType.JSON);
-  }
-  
+  lock.waitLock(30000);
   try {
     const action = e.parameter.action;
-    Logger.log("🔶 [doPost] action=" + (action || "NONE"));
     let data = null;
     
     if (action === "saveAll") {
-      Logger.log("🔶 [doPost] Handling saveAll");
       if (e.postData && e.postData.contents) {
-        Logger.log("🔶 [doPost] Parsing postData.contents");
         const parsed = JSON.parse(e.postData.contents);
         data = parsed.data || parsed;
       } else if (e.parameter.data) {
-        Logger.log("🔶 [doPost] Parsing parameter.data");
         data = JSON.parse(e.parameter.data);
       }
       
       if (data) {
-        Logger.log("🔶 [doPost] Data parsed, calling saveToSheet");
         return saveToSheet(data);
-      } else {
-        Logger.log("❌ [doPost] No data extracted");
       }
     }
     
-    Logger.log("⚠️ [doPost] Unknown or missing action");
     return ContentService.createTextOutput(JSON.stringify({error: "Invalid action"})).setMimeType(ContentService.MimeType.JSON);
   } catch (error) {
-    Logger.log("❌ [doPost] error: " + error.toString());
+    Logger.log("❌ doPost error: " + error.toString());
     return ContentService.createTextOutput(JSON.stringify({success: false, error: error.toString()})).setMimeType(ContentService.MimeType.JSON);
   } finally {
     lock.releaseLock();
-    Logger.log("🔵 [doPost] Lock released");
   }
 }
 
@@ -61,7 +44,10 @@ function doGet(e) {
   try {
     const action = e.parameter.action;
     
-    if (action === "saveAllChunk") {
+    if (action === "getFullData") {
+      Logger.log("🔶 [doGet] Routing to getFullData");
+      return getFullData();
+    } else if (action === "saveAllChunk") {
       Logger.log("🔶 [doGet] Routing to saveAllChunk");
       return saveAllChunk(e);
     } else if (action === "saveDayData") {
@@ -161,6 +147,20 @@ function getSchedule() {
   } catch (error) {
     Logger.log('❌ Error in getSchedule: ' + error);
     return ContentService.createTextOutput(JSON.stringify({})).setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+// ============= GET FULL DATA (no API caching) =============
+function getFullData() {
+  try {
+    const data = getDataFromCell();
+    Logger.log('✅ [getFullData] Read ' + JSON.stringify(data).length + ' chars from A1');
+    return ContentService.createTextOutput(JSON.stringify({success: true, data: data}))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (error) {
+    Logger.log('❌ [getFullData] Error: ' + error);
+    return ContentService.createTextOutput(JSON.stringify({success: false, error: error.toString()}))
+      .setMimeType(ContentService.MimeType.JSON);
   }
 }
 
