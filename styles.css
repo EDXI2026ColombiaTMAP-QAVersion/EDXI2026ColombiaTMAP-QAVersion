@@ -316,6 +316,7 @@ td {
   padding: 0 2px;
   flex-shrink: 0;
   line-height: 1;
+  display: none;
 }
 .member-cell:hover .member-edit-btn {
   opacity: 1;
