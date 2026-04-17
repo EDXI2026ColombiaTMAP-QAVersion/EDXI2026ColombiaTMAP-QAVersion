@@ -440,7 +440,7 @@ function renderPalette() {
     radio.value = brand.id;
     radio.checked = paintMode === "brand" && selectedBrandId === brand.id;
     swatch.style.background = brand.color;
-    name.textContent = brand.billingCode ? `${brand.name} (${brand.billingCode})` : brand.name;
+    name.textContent = brand.name;
     radio.addEventListener("change", () => {
       selectedBrandId = brand.id;
       paintMode = "brand";
@@ -1022,7 +1022,7 @@ async function exportScheduleToNewExcel() {
     sheet.cell("B1").value("Member ID").style("bold", true).style("fill", "D3D3D3");
     sheet.cell("C1").value("Date").style("bold", true).style("fill", "D3D3D3");
     sheet.cell("D1").value("Client").style("bold", true).style("fill", "D3D3D3");
-    sheet.cell("E1").value("Billing Code").style("bold", true).style("fill", "D3D3D3");
+    sheet.cell("E1").value("Brand ID").style("bold", true).style("fill", "D3D3D3");
     sheet.cell("F1").value("Start time").style("bold", true).style("fill", "D3D3D3");
     sheet.cell("G1").value("End time").style("bold", true).style("fill", "D3D3D3");
     sheet.cell("H1").value("Hours").style("bold", true).style("fill", "D3D3D3");
