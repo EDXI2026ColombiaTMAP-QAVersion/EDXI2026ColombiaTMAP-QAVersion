@@ -610,6 +610,11 @@ function paintCell(cell, value, slotIndex) {
   cell.title = brand?.name || "";
 }
 
+function shouldCountBrandHours(brandId) {
+  const brand = state.brands.find((b) => b.id === brandId);
+  return brand && brand.billingCode !== "000000";
+}
+
 function renderTotals() {
   const brandMap = new Map();
   const memberMap = new Map();
@@ -623,6 +628,7 @@ function renderTotals() {
       for (let i = 0; i < arr.length; i += 1) {
         const value = arr[i];
         if (value === "LUNCH" || !value) continue;
+        if (!shouldCountBrandHours(value)) continue; // Skip brands with billing code 000000
         memberHalfHours += 1;
         brandMap.set(value, (brandMap.get(value) || 0) + 1);
       }
@@ -655,6 +661,7 @@ function memberMonthHours(member) {
     if (!arr) continue;
     for (let i = 0; i < arr.length; i += 1) {
       if (arr[i] === "LUNCH" || !arr[i]) continue;
+      if (!shouldCountBrandHours(arr[i])) continue; // Skip brands with billing code 000000
       hh += 1;
     }
   }
@@ -670,6 +677,7 @@ function memberWeekHours(member, weekIndex) {
     if (!arr) continue;
     for (let i = 0; i < arr.length; i += 1) {
       if (arr[i] === "LUNCH" || !arr[i]) continue;
+      if (!shouldCountBrandHours(arr[i])) continue; // Skip brands with billing code 000000
       hh += 1;
     }
   }
@@ -1090,6 +1098,12 @@ async function exportScheduleToNewExcel() {
           
           const brand = brandById.get(brandId);
           if (!brand) {
+            i++;
+            continue;
+          }
+          
+          // Skip brands with billing code 000000
+          if (brand.billingCode === "000000") {
             i++;
             continue;
           }
