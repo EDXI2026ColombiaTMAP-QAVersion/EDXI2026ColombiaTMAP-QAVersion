@@ -561,11 +561,12 @@ async function refreshFromCloud() {
   refreshDataBtn.textContent = "Refreshing...";
 
   try {
-    if (typeof window.reloadDataFromSource !== "function") {
+    const reloadFromSource = window.reloadDataFromSource || window.loadDataFromSheet;
+    if (typeof reloadFromSource !== "function") {
       throw new Error("Cloud refresh is not available.");
     }
 
-    const ok = await window.reloadDataFromSource();
+    const ok = await reloadFromSource();
     if (!ok) {
       throw new Error("No se pudieron cargar los datos remotos.");
     }
