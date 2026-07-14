@@ -504,7 +504,7 @@ body[data-theme="dark"] textarea::placeholder {
 }
 
 .icon-button {
-  width: 32px;
+  width: 80px;
   min-width: 32px;
   height: 32px;
   padding: 0;
