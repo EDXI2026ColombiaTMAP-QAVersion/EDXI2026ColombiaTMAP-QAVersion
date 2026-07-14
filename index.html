@@ -3,25 +3,32 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>DXI Timing Map</title>
+    <title>I&amp;P DJE Studio Colombia | Timing MAP</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='18' fill='none' stroke='white' stroke-width='5'/%3E%3Cpath d='M32 32V20' stroke='white' stroke-width='5' stroke-linecap='round'/%3E%3Cpath d='M32 32l10 6' stroke='white' stroke-width='5' stroke-linecap='round'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <header class="topbar">
-      <h1>DXI Timing Map</h1>
+      <div class="topbar-row">
+        <h1 class="topbar-title">
+          <span class="topbar-clock" aria-hidden="true"></span>
+          <span>I&amp;P DJE Studio Colombia | Timing MAP</span>
+        </h1>
+        <button id="themeToggleBtn" type="button" class="icon-button theme-toggle-button" aria-pressed="false" aria-label="Enable dark theme" title="Enable dark theme"></button>
+      </div>
     </header>
 
     <aside id="legendPanel" class="panel legend-panel">
       <div class="legend-header">
         <h2 style="font-size: 1.2em;">Brand Palette</h2>
-        <button id="toggleLegendBtn" type="button" aria-expanded="true">Collapse</button>
+        <button id="toggleLegendBtn" type="button" class="icon-button hamburger-button" aria-expanded="true" aria-label="Collapse Brand Palette" title="Collapse Brand Palette"></button>
       </div>
       <div class="legend-body">
         <div class="palette-actions">
           <input id="brandSearchInput" type="text" placeholder="Search brands..." style="padding:6px 8px;border:1px solid #ccc;border-radius:4px;width:100%;margin-bottom:8px;font-size:0.9em;" />
-          <button id="eraserBtn" type="button">Eraser</button>
-          <button id="addBrandBtn" type="button">Add Brand</button>
-          <button id="importBrandsBtn" type="button">Import Brands</button>
+          <button id="eraserBtn" type="button" class="icon-button eraser-button" aria-label="Eraser" title="Eraser"></button>
+          <button id="addBrandBtn" type="button" class="button-with-icon icon-plus">Add Brand</button>
+          <button id="importBrandsBtn" type="button" class="button-with-icon icon-upload">Import Brands</button>
         </div>
         <div id="brandPalette" class="brand-palette"></div>
       </div>
@@ -34,12 +41,13 @@
         <div id="monthTabs" class="month-tabs"></div>
 
         <div class="toolbar">
-          <button id="clearMonthBtn" type="button">Clear Full Month</button>
-          <button id="addMemberBtn" type="button">Add Team Member</button>
-          <button id="removeMemberBtn" type="button">Remove Team Member</button>
-          <button id="recurringBtn" type="button">Recurring Schedule</button>
-          <button id="exportExcelBtn" type="button">Export Excel</button>
-          <button id="importJsonBtn" type="button">Import Excel Data</button>
+          <button id="timeOffBtn" type="button" class="button-with-icon icon-time-off" title="Time Off">Time Off</button>
+          <button id="clearMonthBtn" type="button" class="button-with-icon icon-trash">Clear Full Month</button>
+          <button id="addMemberBtn" type="button" class="button-with-icon icon-plus">Add Team Member</button>
+          <button id="removeMemberBtn" type="button" class="button-with-icon icon-user-minus">Remove Team Member</button>
+          <button id="recurringBtn" type="button" class="button-with-icon icon-calendar">Recurring Schedule</button>
+          <button id="exportExcelBtn" type="button" class="button-with-icon icon-sheet">Export Excel</button>
+          <button id="importJsonBtn" type="button" class="button-with-icon icon-upload">Import Excel</button>
           <input id="importJsonFileInput" type="file" accept=".json" hidden />
           <input id="templateFileInput" type="file" accept=".xlsx" hidden />
         </div>
@@ -55,7 +63,7 @@
       <aside id="totalsPanel" class="panel totals-panel">
         <div class="totals-header">
           <h2>Totals</h2>
-          <button id="toggleTotalsBtn" type="button" aria-expanded="true">Collapse</button>
+          <button id="toggleTotalsBtn" type="button" class="icon-button hamburger-button" aria-expanded="true" aria-label="Collapse Totals" title="Collapse Totals"></button>
         </div>
         <div class="totals-section">
           <h3 id="brandTotalsTitle">By Brand</h3>
@@ -179,17 +187,16 @@
       <div id="lunchContextToggle" style="padding:8px 16px;cursor:pointer;font-size:0.92em;white-space:nowrap;">Set as Lunch</div>
     </div>
 
-    <script src="./sync-sheets.js?v=30"></script>
+    <script src="./sync-sheets.js?v=32"></script>
     <script src="./template-data.js?v=2"></script>
     <script src="https://unpkg.com/xlsx-populate/browser/xlsx-populate.min.js"></script>
     <script src="./app.js?v=50"></script>
     
     <script>
-      // Configure Google Sheets sync
-      configureSheetSync(
-        "AIzaSyBUgZjY_u81ZjRt3Nr4u3wVxnuBh2rpnbo",
-        "https://script.google.com/macros/s/AKfycbzNr6NccrbC2epUrfcUrtuHGzfhvI3-AV2_ZSrAsTQKM35-jwzIiQdJYyAN7r3W6xJpvg/exec"
-      );
+      configureSupabaseSync({
+        url: "https://dbzyirwwfvxpdfsukhdq.supabase.co",
+        publishableKey: "sb_publishable_dP4lI6zTvJOvBew5_hRK0Q_yKf-crEw"
+      });
     </script>
   </body>
 </html>

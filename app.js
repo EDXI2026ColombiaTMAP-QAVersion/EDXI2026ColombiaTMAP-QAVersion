@@ -24,8 +24,27 @@ const safeStorage = {
 };
 
 const STORAGE_KEY = "dxi-timing-map-2026-v13";
+const THEME_STORAGE_KEY = "dxi-theme";
+const MEMBER_TOTALS_EXPANDED_KEY = "dxi-member-totals-expanded";
+const SLOT_START_HOUR = 7;
+const SLOT_START_MINUTE = 30;
+const SLOT_END_HOUR = 17;
+const SLOT_END_MINUTE = 0;
+const SLOT_DURATION_MINUTES = 30;
 
 const fallbackColors = ["#2D6A4F", "#1D3557", "#8F2D56", "#CA6702", "#6A4C93", "#264653", "#386641", "#9D4EDD"];
+const expandedMemberTotals = new Set(readStoredStringArray(MEMBER_TOTALS_EXPANDED_KEY));
+
+function readStoredStringArray(key) {
+  const raw = safeStorage.getItem(key);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((item) => typeof item === "string") : [];
+  } catch (e) {
+    return [];
+  }
+}
 
 function resolveDefaults() {
   const pre = window.PRELOADED_DATA || null;
@@ -53,7 +72,24 @@ const MONTHS = [
   { year: 2026, month: 10, label: "Nov 2026" },
   { year: 2026, month: 11, label: "Dec 2026" },
 ];
-let currentMonthIdx = 3;
+
+function getDefaultMonthIndex() {
+  const today = new Date();
+  const exactIdx = MONTHS.findIndex((entry) => entry.year === today.getFullYear() && entry.month === today.getMonth());
+  if (exactIdx !== -1) return exactIdx;
+
+  const todayMonthStart = new Date(today.getFullYear(), today.getMonth(), 1).getTime();
+  if (todayMonthStart < new Date(MONTHS[0].year, MONTHS[0].month, 1).getTime()) return 0;
+
+  for (let i = MONTHS.length - 1; i >= 0; i -= 1) {
+    const monthStart = new Date(MONTHS[i].year, MONTHS[i].month, 1).getTime();
+    if (todayMonthStart >= monthStart) return i;
+  }
+
+  return 0;
+}
+
+let currentMonthIdx = getDefaultMonthIndex();
 
 // Colombian holidays 2026 (blocking dates - no editing allowed)
 const COLOMBIAN_HOLIDAYS = {
@@ -65,6 +101,7 @@ const COLOMBIAN_HOLIDAYS = {
   "2026-06-08": "Corpus Christi",
   "2026-06-15": "Sagrado Corazón",
   "2026-06-29": "San Pedro y San Pablo",
+  "2026-07-13": "Virgen de Chiquinquirá",
   "2026-07-20": "Independencia de Colombia",
   "2026-08-07": "Batalla de Boyacá",
   "2026-08-17": "Asunción de la Virgen",
@@ -93,11 +130,16 @@ let state = null;
 let selectedBrandId = null;
 let paintMode = "brand";
 let isMouseDown = false;
+let tableResizeObserver = null;
+let activeHoverGuides = { row: null, column: [] };
 
 // DOM elements - initialized in init()
 let layoutMain;
 let totalsPanel;
 let toggleTotalsBtn;
+let themeToggleBtn;
+let tableWrap;
+let scheduleTable;
 let scheduleHead;
 let scheduleBody;
 let brandPalette;
@@ -105,6 +147,7 @@ let brandTemplate;
 let brandTotals;
 let memberTotals;
 let eraserBtn;
+let timeOffBtn;
 let clearMonthBtn;
 let addMemberBtn;
 let removeMemberBtn;
@@ -118,6 +161,7 @@ let brandSearchInput;
 let brandSearchQuery = "";
 let importJsonBtn;
 let importJsonFileInput;
+let hoverRowGuide = null;
 
 // Brand modal refs
 let brandModal, brandModalTitle, brandModalName, brandModalColor, brandModalHex, brandModalBillingCode, brandModalSave, brandModalCancel;
@@ -148,6 +192,9 @@ function init() {
   layoutMain = document.getElementById("layoutMain");
   totalsPanel = document.getElementById("totalsPanel");
   toggleTotalsBtn = document.getElementById("toggleTotalsBtn");
+  themeToggleBtn = document.getElementById("themeToggleBtn");
+  tableWrap = document.querySelector(".table-wrap");
+  scheduleTable = document.getElementById("scheduleTable");
   scheduleHead = document.getElementById("scheduleHead");
   scheduleBody = document.getElementById("scheduleBody");
   brandPalette = document.getElementById("brandPalette");
@@ -155,6 +202,7 @@ function init() {
   brandTotals = document.getElementById("brandTotals");
   memberTotals = document.getElementById("memberTotals");
   eraserBtn = document.getElementById("eraserBtn");
+  timeOffBtn = document.getElementById("timeOffBtn");
   clearMonthBtn = document.getElementById("clearMonthBtn");
   addMemberBtn = document.getElementById("addMemberBtn");
   removeMemberBtn = document.getElementById("removeMemberBtn");
@@ -167,6 +215,7 @@ function init() {
   legendPanel = document.getElementById("legendPanel");
   toggleLegendBtn = document.getElementById("toggleLegendBtn");
   brandSearchInput = document.getElementById("brandSearchInput");
+  ensureHoverGuide();
 
   // Brand modal
   brandModal = document.getElementById("brandModal");
@@ -201,6 +250,7 @@ function init() {
   importBrandsCancel.addEventListener("click", () => { importBrandsModal.hidden = true; });
   importBrandsModal.addEventListener("click", (e) => { if (e.target === importBrandsModal) importBrandsModal.hidden = true; });
 
+  applyTheme(safeStorage.getItem(THEME_STORAGE_KEY) === "dark" ? "dark" : "light", false);
   renderMonthTabs();
   updateScheduleTitle();
   applyTotalsCollapse(safeStorage.getItem("dxi-totals-collapsed") === "1");
@@ -209,6 +259,19 @@ function init() {
   renderTable();
   renderTotals();
   attachEvents();
+
+  if (window.ResizeObserver && tableWrap && !tableResizeObserver) {
+    tableResizeObserver = new ResizeObserver(() => {
+      window.requestAnimationFrame(updateTableSizing);
+    });
+    tableResizeObserver.observe(tableWrap);
+  }
+
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", () => {
+      window.requestAnimationFrame(updateTableSizing);
+    });
+  }
 }
 
 function switchMonth(idx) {
@@ -254,35 +317,50 @@ function updateScheduleTitle() {
 
 function buildSlots() {
   const built = [];
-  let idx = 0;
-  for (let hour = 7; hour <= 16; hour += 1) {
-    for (const minute of [0, 30]) {
-      built.push({ index: idx, label: toLabel(hour, minute), hour, minute, isLunch: hour === 13 });
-      idx += 1;
-    }
+  const startMinutes = SLOT_START_HOUR * 60 + SLOT_START_MINUTE;
+  const endMinutes = SLOT_END_HOUR * 60 + SLOT_END_MINUTE;
+  const lunchStartMinutes = 13 * 60;
+  const lunchEndMinutes = 14 * 60;
+
+  for (let totalMinutes = startMinutes, idx = 0; totalMinutes <= endMinutes; totalMinutes += SLOT_DURATION_MINUTES, idx += 1) {
+    const hour = Math.floor(totalMinutes / 60);
+    const minute = totalMinutes % 60;
+    built.push({
+      index: idx,
+      label: toLabel(hour, minute),
+      hour,
+      minute,
+      isLunch: totalMinutes >= lunchStartMinutes && totalMinutes < lunchEndMinutes,
+      isFringe: totalMinutes === startMinutes || totalMinutes === endMinutes,
+    });
   }
   return built;
 }
 
 function buildMonthWeekdays(year, month) {
   const out = [];
-  const firstOfMonth = new Date(year, month, 1);
-  const firstDow = firstOfMonth.getDay(); // 0=Sun, 1=Mon, ...
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  let firstWeekdayDate = null;
+  let lastWeekdayDate = null;
 
-  // If month doesn't start on Monday, pad with previous month's weekdays
-  // so the first displayed week starts on Monday
-  if (firstDow !== 1 && firstDow !== 0) {
-    // How many weekdays to go back to reach Monday
-    const daysBack = firstDow - 1; // e.g. Wed(3) → 2 days back
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const date = new Date(year, month, day);
+    const weekDay = date.getDay();
+    if (weekDay === 0 || weekDay === 6) continue;
+    if (!firstWeekdayDate) firstWeekdayDate = new Date(date);
+    lastWeekdayDate = new Date(date);
+  }
+
+  if (firstWeekdayDate) {
+    const daysBack = firstWeekdayDate.getDay() - 1; // Tue=1 backfill, Wed=2, ... Fri=4
     for (let i = daysBack; i >= 1; i -= 1) {
-      const date = new Date(year, month, 1 - i);
+      const date = new Date(firstWeekdayDate);
+      date.setDate(firstWeekdayDate.getDate() - i);
       const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
       out.push({ key, day: date.getDate(), label: `${date.toLocaleDateString("en-US", { weekday: "short" })} ${date.getDate()}`, foreign: true });
     }
   }
 
-  // Add all weekdays of the actual month
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
   for (let day = 1; day <= daysInMonth; day += 1) {
     const date = new Date(year, month, day);
     const weekDay = date.getDay();
@@ -291,14 +369,11 @@ function buildMonthWeekdays(year, month) {
     out.push({ key, day, label: `${date.toLocaleDateString("en-US", { weekday: "short" })} ${day}` });
   }
 
-  // If the last day of the month doesn't fall on Friday, pad with next month's weekdays
-  const lastDate = new Date(year, month, daysInMonth);
-  const lastDow = lastDate.getDay();
-  if (lastDow !== 5 && lastDow !== 6 && lastDow !== 0) {
-    const daysForward = 5 - lastDow; // e.g. Wed(3) → 2 more days to reach Fri
+  if (lastWeekdayDate) {
+    const daysForward = 5 - lastWeekdayDate.getDay(); // Mon=4 forward fill ... Thu=1
     for (let i = 1; i <= daysForward; i += 1) {
-      const date = new Date(year, month, daysInMonth + i);
-      if (date.getDay() === 0 || date.getDay() === 6) continue;
+      const date = new Date(lastWeekdayDate);
+      date.setDate(lastWeekdayDate.getDate() + i);
       const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
       out.push({ key, day: date.getDate(), label: `${date.toLocaleDateString("en-US", { weekday: "short" })} ${date.getDate()}`, foreign: true });
     }
@@ -309,7 +384,21 @@ function buildMonthWeekdays(year, month) {
 
 function chunkWeekdays(days, size) {
   const out = [];
-  for (let i = 0; i < days.length; i += size) out.push(days.slice(i, i + size));
+  let currentWeek = [];
+
+  for (const day of days) {
+    const date = new Date(`${day.key}T00:00:00`);
+    const dayOfWeek = date.getDay();
+
+    if (currentWeek.length && dayOfWeek === 1) {
+      out.push(currentWeek);
+      currentWeek = [];
+    }
+
+    currentWeek.push(day);
+  }
+
+  if (currentWeek.length) out.push(currentWeek);
   return out;
 }
 
@@ -421,9 +510,42 @@ function saveState(changedDay) {
   return Promise.resolve(true);
 }
 
+function applyTheme(theme, persist = true) {
+  const nextTheme = theme === "dark" ? "dark" : "light";
+  document.body.dataset.theme = nextTheme;
+
+  if (themeToggleBtn) {
+    const darkEnabled = nextTheme === "dark";
+    themeToggleBtn.setAttribute("aria-pressed", darkEnabled ? "true" : "false");
+    themeToggleBtn.setAttribute("aria-label", darkEnabled ? "Disable dark theme" : "Enable dark theme");
+    themeToggleBtn.title = darkEnabled ? "Disable dark theme" : "Enable dark theme";
+  }
+
+  if (persist) {
+    safeStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+  }
+
+  if (scheduleBody?.children?.length) {
+    renderTable();
+  }
+}
+
+function toggleTheme() {
+  applyTheme(document.body.dataset.theme === "dark" ? "light" : "dark");
+}
+
+function getTimeOffBrand() {
+  return state.brands.find((brand) => (brand.name || "").trim().toLowerCase() === "time off")
+    || state.brands.find((brand) => brand.billingCode === "000000")
+    || null;
+}
+
 function renderPalette() {
   brandPalette.innerHTML = "";
+  const timeOffBrand = getTimeOffBrand();
   for (const brand of state.brands) {
+    if (timeOffBrand && brand.id === timeOffBrand.id) continue;
+
     // Filter by search query
     if (brandSearchQuery) {
       const brandName = brand.name.toLowerCase();
@@ -464,6 +586,7 @@ function renderPalette() {
 }
 
 function renderTable() {
+  clearHoverGuides();
   scheduleHead.innerHTML = "";
   scheduleBody.innerHTML = "";
 
@@ -489,10 +612,12 @@ function renderTable() {
       const day = weekDays[i];
       const th = document.createElement("th");
       th.colSpan = slots.length;
+      th.dataset.weekIndex = String(w);
+      th.dataset.dayIndex = String(i);
       if (isHoliday(day.key)) {
         th.textContent = `${day.label} (Holiday)`;
         th.classList.add("holiday-day");
-        th.style.background = "#fcc4d6";
+        th.style.background = "var(--holiday-bg)";
         th.title = COLOMBIAN_HOLIDAYS[day.key];
       } else {
         th.textContent = day.label;
@@ -516,10 +641,16 @@ function renderTable() {
     for (let i = 0; i < weekDays.length; i += 1) {
       for (const slot of slots) {
         const th = document.createElement("th");
+        th.dataset.weekIndex = String(w);
+        th.dataset.columnIndex = String(i * slots.length + slot.index);
         th.textContent = compactSlotLabel(slot);
-        if (isHoliday(weekDays[i].key)) th.style.background = "#fcc4d6";
-        else if (weekDays[i].foreign) th.style.background = "#f0f2f1";
-        else if (slot.isLunch) th.style.background = "#e3e8e4";
+        if (isHoliday(weekDays[i].key)) {
+          th.classList.add("holiday-slot");
+          th.style.background = "var(--holiday-bg)";
+        }
+        else if (weekDays[i].foreign) th.style.background = "var(--foreign-bg)";
+        else if (slot.isLunch) th.style.background = "var(--lunch-header-bg)";
+        else if (slot.isFringe) th.style.background = "var(--foreign-bg)";
         slotRow.appendChild(th);
       }
       if (i < weekDays.length - 1) {
@@ -532,6 +663,9 @@ function renderTable() {
 
     for (const member of state.members) {
       const tr = document.createElement("tr");
+      tr.className = "member-row";
+      tr.dataset.weekIndex = String(w);
+      tr.dataset.member = member;
       const memberCell = document.createElement("td");
       memberCell.className = "member-cell";
       const boldNames = ["Daniela Mahecha", "Hernan Torres", "David Guzman", "William Franco"];
@@ -560,21 +694,25 @@ function renderTable() {
           td.dataset.member = member;
           td.dataset.slot = String(slot.index);
           td.dataset.day = day.key;
+          td.dataset.weekIndex = String(w);
+          td.dataset.columnIndex = String(i * slots.length + slot.index);
           
           const dayIsHoliday = isHoliday(day.key);
           
           if (day.foreign) {
             td.classList.add("foreign");
-            td.style.background = "#f0f2f1";
+            td.style.background = "var(--foreign-bg)";
           } else if (dayIsHoliday) {
             td.classList.add("holiday");
-            td.style.background = "#fcc4d6";
+            td.style.background = "var(--holiday-bg)";
             td.style.cursor = "not-allowed";
             td.title = `Holiday: ${COLOMBIAN_HOLIDAYS[day.key]}`;
             td.textContent = "";
           } else if (state.assignments[day.key][member][slot.index] === "LUNCH") {
             td.classList.add("lunch");
-            td.textContent = "L";
+            td.textContent = "";
+            td.title = "Lunch";
+            td.setAttribute("aria-label", "Lunch");
           } else {
             paintCell(td, state.assignments[day.key][member][slot.index], slot.index);
           }
@@ -590,24 +728,98 @@ function renderTable() {
       scheduleBody.appendChild(tr);
     }
   }
+
+  updateTableSizing();
 }
 
 function compactSlotLabel(slot) {
   return slot.minute === 0 ? String(slot.hour) : `${slot.hour}.5`;
 }
 
+function clearHoverGuides() {
+  if (activeHoverGuides.row) {
+    activeHoverGuides.row.classList.remove("is-hover-row");
+  }
+  for (const cell of activeHoverGuides.column) {
+    cell.classList.remove("is-hover-col", "is-hover-col-start", "is-hover-col-end");
+  }
+  if (hoverRowGuide) {
+    hoverRowGuide.hidden = true;
+  }
+  activeHoverGuides = { row: null, column: [] };
+}
+
+function ensureHoverGuide() {
+  if (!tableWrap || hoverRowGuide) return;
+  hoverRowGuide = document.createElement("div");
+  hoverRowGuide.className = "hover-row-guide";
+  hoverRowGuide.hidden = true;
+  tableWrap.appendChild(hoverRowGuide);
+}
+
+function positionHoverRowGuide(row) {
+  if (!hoverRowGuide || !scheduleTable) return;
+  hoverRowGuide.style.top = `${row.offsetTop}px`;
+  hoverRowGuide.style.left = "0";
+  hoverRowGuide.style.width = `${scheduleTable.scrollWidth}px`;
+  hoverRowGuide.style.height = `${row.offsetHeight}px`;
+  hoverRowGuide.hidden = false;
+}
+
+function updateHoverGuides(cell) {
+  if (!cell) {
+    clearHoverGuides();
+    return;
+  }
+
+  const row = cell.closest(".member-row");
+  const weekIndex = cell.dataset.weekIndex;
+  const columnIndex = cell.dataset.columnIndex;
+  if (!row || weekIndex == null || columnIndex == null) {
+    clearHoverGuides();
+    return;
+  }
+
+  const sameRow = activeHoverGuides.row === row;
+  const sameColumn = activeHoverGuides.column.length
+    && activeHoverGuides.column.every((node) => (
+      node.dataset.weekIndex === weekIndex && node.dataset.columnIndex === columnIndex
+    ));
+  if (sameRow && sameColumn) return;
+
+  clearHoverGuides();
+
+  row.classList.add("is-hover-row");
+  positionHoverRowGuide(row);
+  const columnCells = Array.from(
+    scheduleBody.querySelectorAll(`[data-week-index="${weekIndex}"][data-column-index="${columnIndex}"]`)
+  );
+  for (const columnCell of columnCells) {
+    columnCell.classList.add("is-hover-col");
+  }
+  if (columnCells.length) {
+    columnCells[0].classList.add("is-hover-col-start");
+    columnCells[columnCells.length - 1].classList.add("is-hover-col-end");
+  }
+
+  activeHoverGuides = { row, column: columnCells };
+}
+
 function paintCell(cell, value, slotIndex) {
   if (cell.classList.contains("lunch")) return;
+  const startLabel = slots[slotIndex]?.label || "";
+  const endLabel = getSlotEndLabel(slotIndex);
+  const slotLabel = startLabel && endLabel ? `${startLabel}-${endLabel}` : startLabel;
   if (!value) {
-    // slot 0 and 1 are 7:00 and 7:30 (early morning) - use light gray
-    const bgColor = (slotIndex === 0 || slotIndex === 1) ? "#f0f2f1" : "#ffffff";
+    // The first and last half-hour bands are shown muted by default.
+    const bgColor = (slotIndex === 0 || slotIndex === slots.length - 1) ? "var(--foreign-bg)" : "var(--table-bg)";
     cell.style.background = bgColor;
-    cell.title = "";
+    cell.title = slotLabel;
     return;
   }
   const brand = state.brands.find((b) => b.id === value);
-  cell.style.background = brand?.color || "#ffffff";
-  cell.title = brand?.name || "";
+  cell.style.background = brand?.color || "var(--table-bg)";
+  cell.title = brand?.name ? `${brand.name} (${slotLabel})` : slotLabel;
 }
 
 function shouldCountBrandHours(brandId) {
@@ -645,12 +857,99 @@ function renderTotals() {
     .sort((a, b) => b.hours - a.hours || a.member.localeCompare(b.member));
 
   brandTotals.innerHTML = renderTotalList(brandEntries.map((x) => ({ key: x.brand, value: `${x.hours.toFixed(1)} h` })), "No brand assignments yet");
-  memberTotals.innerHTML = renderTotalList(memberEntries.map((x) => ({ key: x.member, value: `${x.hours.toFixed(1)} h` })), "No member totals yet");
+  memberTotals.innerHTML = renderMemberTotals(memberEntries);
 }
 
 function renderTotalList(items, emptyText) {
   if (!items.length) return `<p>${emptyText}</p>`;
   return `<ul class="total-list">${items.map((item) => `<li><span>${escapeHtml(item.key)}</span><strong>${item.value}</strong></li>`).join("")}</ul>`;
+}
+
+function renderMemberTotals(items) {
+  if (!items.length) return "<p>No member totals yet</p>";
+  return `<div class="member-total-list">${items.map((item) => renderMemberTotalCard(item)).join("")}</div>`;
+}
+
+function renderMemberTotalCard(item) {
+  const schedule = getMemberWorkSchedule(item.member);
+  const isExpanded = expandedMemberTotals.has(item.member);
+  const bodyMarkup = schedule.length
+    ? `<ul class="member-total-schedule">${schedule.map((day) => `
+        <li class="member-total-shift">
+          <span class="member-total-day">${escapeHtml(day.label)}</span>
+          <span class="member-total-ranges">${day.blocks.map((block) => `
+            <span class="member-total-pill">
+              <span class="member-total-pill-time">${escapeHtml(block.range)}</span>
+              <span class="member-total-pill-brand">${escapeHtml(block.brand)}</span>
+            </span>`).join("")}</span>
+        </li>`).join("")}
+      </ul>`
+    : `<p class="member-total-empty">No scheduled work blocks in this month.</p>`;
+
+  return `
+    <div class="member-total-card${isExpanded ? " expanded" : ""}">
+      <button
+        type="button"
+        class="member-total-toggle"
+        data-member="${escapeHtml(item.member)}"
+        aria-expanded="${isExpanded ? "true" : "false"}"
+      >
+        <span class="member-total-summary">
+          <span class="member-total-arrow" aria-hidden="true"></span>
+          <span class="member-total-name">${escapeHtml(item.member)}</span>
+        </span>
+        <strong class="member-total-hours">${item.hours.toFixed(1)} h</strong>
+      </button>
+      <div class="member-total-body"${isExpanded ? "" : " hidden"}>
+        ${bodyMarkup}
+      </div>
+    </div>`;
+}
+
+function getMemberWorkSchedule(member) {
+  const schedule = [];
+
+  for (const day of weekdays) {
+    if (day.foreign || isHoliday(day.key)) continue;
+    const slotsForDay = state.assignments[day.key]?.[member];
+    if (!slotsForDay) continue;
+
+    const blocks = [];
+    for (let i = 0; i < slotsForDay.length; i += 1) {
+      const value = slotsForDay[i];
+      if (value === "LUNCH" || !value || !shouldCountBrandHours(value)) continue;
+
+      const startIdx = i;
+      let endIdx = i;
+      while (endIdx + 1 < slotsForDay.length) {
+        const nextValue = slotsForDay[endIdx + 1];
+        if (nextValue !== value || nextValue === "LUNCH" || !nextValue || !shouldCountBrandHours(nextValue)) break;
+        endIdx += 1;
+      }
+
+      const startLabel = slots[startIdx]?.label || "";
+      const endLabel = getSlotEndLabel(endIdx);
+      const brandName = state.brands.find((brand) => brand.id === value)?.name || "Unknown";
+      const rangeLabel = startLabel && endLabel ? `${startLabel}-${endLabel}` : startLabel;
+      if (rangeLabel) {
+        blocks.push({
+          range: rangeLabel,
+          brand: brandName,
+        });
+      }
+
+      i = endIdx;
+    }
+
+    if (blocks.length) {
+      schedule.push({
+        label: day.label,
+        blocks,
+      });
+    }
+  }
+
+  return schedule;
 }
 
 function memberMonthHours(member) {
@@ -705,9 +1004,44 @@ function attachEvents() {
     safeStorage.setItem("dxi-legend-collapsed", collapsed ? "1" : "0");
   });
 
+  themeToggleBtn.addEventListener("click", toggleTheme);
+
+  memberTotals.addEventListener("click", (event) => {
+    const toggle = event.target.closest(".member-total-toggle");
+    if (!toggle) return;
+
+    const card = toggle.closest(".member-total-card");
+    const body = card?.querySelector(".member-total-body");
+    const member = toggle.dataset.member;
+    if (!card || !body || !member) return;
+
+    const expanded = !card.classList.contains("expanded");
+    card.classList.toggle("expanded", expanded);
+    toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+    body.hidden = !expanded;
+
+    if (expanded) expandedMemberTotals.add(member);
+    else expandedMemberTotals.delete(member);
+    safeStorage.setItem(MEMBER_TOTALS_EXPANDED_KEY, JSON.stringify([...expandedMemberTotals]));
+  });
+
   eraserBtn.addEventListener("click", () => {
     paintMode = paintMode === "erase" ? "brand" : "erase";
     updateEraserVisual();
+  });
+
+  timeOffBtn.addEventListener("click", () => {
+    const timeOffBrand = getTimeOffBrand();
+    if (!timeOffBrand) {
+      showToast("Time Off brand was not found", "error");
+      return;
+    }
+
+    selectedBrandId = timeOffBrand.id;
+    paintMode = "brand";
+    renderPalette();
+    updateEraserVisual();
+    saveState();
   });
 
   clearMonthBtn.addEventListener("click", async () => {
@@ -856,6 +1190,7 @@ function attachEvents() {
 
   scheduleBody.addEventListener("mousedown", (event) => {
     const cell = event.target.closest(".slot-cell");
+    updateHoverGuides(cell);
     if (!cell || cell.classList.contains("lunch") || cell.classList.contains("foreign") || cell.classList.contains("holiday")) return;
     isMouseDown = true;
     const member = cell.dataset.member;
@@ -867,8 +1202,9 @@ function attachEvents() {
   });
 
   scheduleBody.addEventListener("mouseover", (event) => {
-    if (!isMouseDown) return;
     const cell = event.target.closest(".slot-cell");
+    updateHoverGuides(cell);
+    if (!isMouseDown) return;
     if (!cell || cell.classList.contains("lunch") || cell.classList.contains("foreign") || cell.classList.contains("holiday")) return;
     const member = cell.dataset.member;
     const dayKey = cell.dataset.day;
@@ -899,6 +1235,10 @@ function attachEvents() {
       await _lastPaintSyncPromise;
       _lastPaintSyncPromise = null;
     }
+  });
+
+  scheduleBody.addEventListener("mouseleave", () => {
+    clearHoverGuides();
   });
 
   // ── Right-click to toggle Lunch per member per slot ──────────────────────
@@ -936,6 +1276,26 @@ function attachEvents() {
 
   document.addEventListener("click", () => { lunchMenu.style.display = "none"; _lunchCtx = null; });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") { lunchMenu.style.display = "none"; _lunchCtx = null; } });
+  window.addEventListener("resize", () => {
+    window.requestAnimationFrame(updateTableSizing);
+  });
+}
+
+function updateTableSizing() {
+  if (!tableWrap || !weeks.length) return;
+
+  const maxWeekDays = weeks.reduce((max, week) => Math.max(max, week.length), 0);
+  if (!maxWeekDays) return;
+
+  const rootStyles = getComputedStyle(document.documentElement);
+  const memberWidth = parseInt(rootStyles.getPropertyValue("--member-col-width"), 10) || 128;
+  const dayGapWidth = parseInt(rootStyles.getPropertyValue("--day-gap-width"), 10) || 8;
+  const totalSlotColumns = maxWeekDays * slots.length;
+  const availableWidth = tableWrap.clientWidth - memberWidth - (Math.max(0, maxWeekDays - 1) * dayGapWidth) - 8;
+  const computedSlotWidth = Math.floor(availableWidth / totalSlotColumns);
+  const slotWidth = Math.max(12, Math.min(22, computedSlotWidth));
+
+  document.documentElement.style.setProperty("--slot-width", `${slotWidth}px`);
 }
 
 async function importFromJson(data) {
@@ -1042,15 +1402,11 @@ async function exportScheduleToNewExcel() {
 
     // Helper function to convert slot index to time
     const getSlotTime = (slotIndex) => {
-      const OPEN_HOUR = 7;
-      const OPEN_MIN = 0;
-      const SLOT_DURATION = 30; // minutes
-      
-      let totalMinutes = OPEN_HOUR * 60 + OPEN_MIN + (slotIndex * SLOT_DURATION);
+      let totalMinutes = SLOT_START_HOUR * 60 + SLOT_START_MINUTE + (slotIndex * SLOT_DURATION_MINUTES);
       const startHour = Math.floor(totalMinutes / 60);
       const startMin = totalMinutes % 60;
       
-      const endMinutes = totalMinutes + SLOT_DURATION;
+      const endMinutes = totalMinutes + SLOT_DURATION_MINUTES;
       const endHour = Math.floor(endMinutes / 60);
       const endMin = endMinutes % 60;
       
@@ -1395,24 +1751,48 @@ async function editMember(memberName) {
 
 function applyTotalsCollapse(collapsed) {
   totalsPanel.classList.toggle("collapsed", collapsed);
-  toggleTotalsBtn.textContent = collapsed ? "Expand" : "Collapse";
   toggleTotalsBtn.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  toggleTotalsBtn.setAttribute("aria-label", collapsed ? "Expand Totals" : "Collapse Totals");
+  toggleTotalsBtn.title = collapsed ? "Expand Totals" : "Collapse Totals";
 }
 
 function applyLegendCollapse(collapsed) {
   legendPanel.classList.toggle("collapsed", collapsed);
-  toggleLegendBtn.textContent = collapsed ? "Expand" : "Collapse";
   toggleLegendBtn.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  toggleLegendBtn.setAttribute("aria-label", collapsed ? "Expand Brand Palette" : "Collapse Brand Palette");
+  toggleLegendBtn.title = collapsed ? "Expand Brand Palette" : "Collapse Brand Palette";
 }
 
 function updateEraserVisual() {
-  eraserBtn.style.borderColor = paintMode === "erase" ? "#0E75FF" : "#E0E0E0";
-  eraserBtn.style.background = paintMode === "erase" ? "#EBF3FF" : "#FAFAFA";
+  const timeOffBrand = getTimeOffBrand();
+  const timeOffActive = paintMode === "brand" && selectedBrandId === timeOffBrand?.id;
+
+  eraserBtn.style.borderColor = paintMode === "erase" ? "var(--eraser-active-border)" : "var(--eraser-border)";
+  eraserBtn.style.background = paintMode === "erase" ? "var(--eraser-active-bg)" : "var(--eraser-bg)";
+  eraserBtn.style.color = "var(--eraser-color)";
+  eraserBtn.setAttribute("aria-pressed", paintMode === "erase" ? "true" : "false");
+
+  if (timeOffBtn) {
+    timeOffBtn.style.borderColor = timeOffActive ? "var(--time-off-active-border)" : "var(--time-off-border)";
+    timeOffBtn.style.background = timeOffActive ? "var(--time-off-active-bg)" : "var(--time-off-bg)";
+    timeOffBtn.style.color = timeOffActive ? "var(--time-off-active-color)" : "var(--time-off-color)";
+    timeOffBtn.setAttribute("aria-pressed", timeOffActive ? "true" : "false");
+    timeOffBtn.disabled = !timeOffBrand;
+    timeOffBtn.title = timeOffBrand ? "Time Off" : "Time Off brand not found";
+  }
 }
 
 function toLabel(hour, minute) {
   const min = minute === 0 ? "00" : "30";
   return `${hour}:${min}`;
+}
+
+function getSlotEndLabel(slotIndex) {
+  const slot = slots[slotIndex];
+  if (!slot) return "";
+  const endHour = slot.minute === 30 ? slot.hour + 1 : slot.hour;
+  const endMinute = slot.minute === 30 ? 0 : 30;
+  return toLabel(endHour, endMinute);
 }
 
 /* ── Recurring Schedule Modal ── */
@@ -1424,9 +1804,20 @@ function openRecurringModal() {
   const endSel = document.getElementById("recEnd");
   const scopeSel = document.getElementById("recScope");
   const weekPicker = document.getElementById("recWeekPicker");
+  const weekLabel = weekPicker.querySelector(".modal-label");
   const weekSel = document.getElementById("recWeek");
   const dayPicker = document.getElementById("recDayPicker");
   const daysGrid = document.getElementById("recDays");
+  let weeksGrid = document.getElementById("recWeeks");
+
+  if (!weeksGrid) {
+    weeksGrid = document.createElement("div");
+    weeksGrid.id = "recWeeks";
+    weeksGrid.className = "rec-days-grid";
+    weekPicker.appendChild(weeksGrid);
+  }
+  if (weekLabel) weekLabel.textContent = "Weeks";
+  if (weekSel) weekSel.hidden = true;
 
   // Populate members
   memberSel.innerHTML = state.members.map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join("");
@@ -1439,18 +1830,41 @@ function openRecurringModal() {
   if (selectedBrandId) brandSel.value = selectedBrandId;
 
   // Populate time slots (all slots including lunch)
-  const timeOptions = slots
+  const startTimeOptions = slots
     .map((s) => `<option value="${s.index}">${s.label}</option>`)
     .join("");
-  startSel.innerHTML = timeOptions;
-  endSel.innerHTML = timeOptions;
-  // Default start to 8:00 (index 2: 7:00=0, 7:30=1, 8:00=2)
-  startSel.value = "2";
-  // Default end to last slot (17:00)
-  if (slots.length) endSel.value = String(slots[slots.length - 1].index);
+  const endTimeOptions = slots
+    .map((s) => `<option value="${s.index + 1}">${getSlotEndLabel(s.index)}</option>`)
+    .join("");
+  startSel.innerHTML = startTimeOptions;
+  endSel.innerHTML = endTimeOptions;
+  // Default start to 8:00
+  const defaultStartSlot = slots.find((slot) => slot.label === "8:00");
+  if (defaultStartSlot) {
+    startSel.value = String(defaultStartSlot.index);
+  }
+  // Default end to 9:00
+  const defaultEndSlot = slots.findIndex((slot) => getSlotEndLabel(slot.index) === "9:00");
+  if (defaultEndSlot !== -1) {
+    endSel.value = String(defaultEndSlot + 1);
+  } else if (slots.length) {
+    endSel.value = String(slots.length);
+  }
 
-  // Populate weeks
-  weekSel.innerHTML = weeks.map((_, i) => `<option value="${i}">Week ${i + 1}</option>`).join("");
+  function renderWeekChips() {
+    weeksGrid.innerHTML = "";
+    weeks.forEach((week, i) => {
+      const chip = document.createElement("span");
+      chip.className = "rec-day-chip";
+      chip.textContent = `Week ${i + 1}`;
+      chip.dataset.weekIndex = String(i);
+      chip.title = week.filter((d) => !d.foreign).map((d) => d.label).join(", ");
+      if (i === 0) chip.classList.add("selected");
+      chip.addEventListener("click", () => chip.classList.toggle("selected"));
+      weeksGrid.appendChild(chip);
+    });
+  }
+  renderWeekChips();
 
   // Populate day chips
   function renderDayChips() {
@@ -1458,7 +1872,7 @@ function openRecurringModal() {
     for (const day of weekdays) {
       if (day.foreign) continue;
       const chip = document.createElement("span");
-      chip.className = "rec-day-chip selected";
+      chip.className = "rec-day-chip";
       chip.textContent = day.label;
       chip.dataset.key = day.key;
       chip.addEventListener("click", () => chip.classList.toggle("selected"));
@@ -1483,10 +1897,11 @@ function openRecurringModal() {
     const member = memberSel.value;
     const brandId = brandSel.value;
     const startIdx = Number(startSel.value);
-    const endIdx = Number(endSel.value);
+    const endExclusiveIdx = Number(endSel.value);
+    const brandName = state.brands.find((b) => b.id === brandId)?.name || "Selected brand";
 
-    if (startIdx > endIdx) {
-      alert("Start time must be before or equal to end time.");
+    if (startIdx >= endExclusiveIdx) {
+      alert("End time must be after start time.");
       return;
     }
 
@@ -1495,25 +1910,58 @@ function openRecurringModal() {
     if (scopeSel.value === "month") {
       targetDays = weekdays.filter((d) => !d.foreign).map((d) => d.key);
     } else if (scopeSel.value === "monToFri") {
-      const wIdx = Number(weekSel.value);
-      targetDays = (weeks[wIdx] || []).filter((d) => !d.foreign).map((d) => d.key);
+      const selectedWeekIndexes = [...weeksGrid.querySelectorAll(".rec-day-chip.selected")]
+        .map((chip) => Number(chip.dataset.weekIndex))
+        .filter((idx) => !Number.isNaN(idx));
+
+      targetDays = selectedWeekIndexes.flatMap((wIdx) =>
+        (weeks[wIdx] || []).filter((d) => !d.foreign).map((d) => d.key)
+      );
     } else {
       targetDays = [...daysGrid.querySelectorAll(".rec-day-chip.selected")].map((c) => c.dataset.key);
     }
+
+    targetDays = [...new Set(targetDays)];
 
     if (!targetDays.length) {
       alert("No days selected.");
       return;
     }
 
+    const slotIndexesInRange = [];
+    for (let i = startIdx; i < endExclusiveIdx; i += 1) {
+      if (lunchSlots.has(i)) continue;
+      slotIndexesInRange.push(i);
+    }
+
+    if (!slotIndexesInRange.length) {
+      alert("The selected time range only includes lunch slots.");
+      return;
+    }
+
+    const hoursPerDay = slotIndexesInRange.length * 0.5;
+    const totalHours = hoursPerDay * targetDays.length;
+    const confirmationMessage = [
+      "Apply recurring schedule?",
+      "",
+      `Team Member: ${member}`,
+      `Brand: ${brandName}`,
+      `Time: ${slots[startIdx].label} - ${endSel.options[endSel.selectedIndex].text}`,
+      `Days: ${targetDays.length}`,
+      `Hours per day: ${hoursPerDay.toFixed(1)}h`,
+      `Total scheduled hours: ${totalHours.toFixed(1)}h`
+    ].join("\n");
+
+    if (!confirm(confirmationMessage)) {
+      return;
+    }
+
     // Apply brand to slots in range for each target day
-    let count = 0;
     for (const dayKey of targetDays) {
       if (!state.assignments[dayKey]?.[member]) continue;
-      for (let i = startIdx; i < endIdx; i += 1) {
+      for (let i = startIdx; i < endExclusiveIdx; i += 1) {
         if (lunchSlots.has(i)) continue;
         state.assignments[dayKey][member][i] = brandId;
-        count += 1;
       }
     }
 
@@ -1521,7 +1969,12 @@ function openRecurringModal() {
     renderTable();
     renderTotals();
     const ok = await saveState(targetDays);
-    showToast(ok ? `Schedule applied to ${targetDays.length} day(s), ${count} slot(s) updated` : "⚠️ No se pudo guardar, intenta de nuevo", ok ? "success" : "error");
+    showToast(
+      ok
+        ? `${member} scheduled for ${hoursPerDay.toFixed(1)}h/day across ${targetDays.length} day(s)`
+        : "⚠️ No se pudo guardar, intenta de nuevo",
+      ok ? "success" : "error"
+    );
   };
 
   modal.hidden = false;

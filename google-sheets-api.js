@@ -28,7 +28,7 @@ async function loadCompleteDataFromSheets(retries = 3) {
         scheduleResp.json()
       ]);
       
-      console.log('✓ Complete data loaded from Google Sheets');
+      console.log(' Complete data loaded from Google Sheets');
       console.log('  Members:', Array.isArray(membersData) ? membersData.length : 0);
       console.log('  Brands:', Array.isArray(brandsData) ? brandsData.length : 0);
       console.log('  Schedule days:', scheduleData ? Object.keys(scheduleData).length : 0);

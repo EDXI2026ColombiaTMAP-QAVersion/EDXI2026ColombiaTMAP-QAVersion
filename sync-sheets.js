@@ -1,385 +1,609 @@
-// Google Sheets Configuration
-const SHEET_ID = "1aZQlQdszET32S_pM8et-L_T0tA6CZ-4uFKPuCWz3Vxo";
-const SHEET_NAME = "assignments";
-const SHEET_RANGE = "A1";
+// Supabase direct sync adapter for static hosting (GitHub Pages).
+// Keeps the legacy function names used by app.js so the UI code can stay unchanged.
 
-// Google Sheets API Key
-let API_KEY = null;
+const DEFAULT_MIN_DATE = "2026-01-01";
+const DEFAULT_MAX_DATE = "2026-12-31";
 
-// Google Apps Script Web App URL
-let WEB_APP_URL = null;
+let SUPABASE_URL = null;
+let SUPABASE_PUBLISHABLE_KEY = null;
 
-// Render Proxy URL (optional, for CORS-free requests)
-let PROXY_URL = null;
-
-/**
- * Fetches data from Google Sheet using Sheets API
- * All data (members, brands, assignments) comes from the Sheet
- */
-async function loadDataFromSheet() {
-  try {
-    if (!API_KEY) {
-      throw new Error("API Key no configurada");
-    }
-    
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${SHEET_NAME}!${SHEET_RANGE}?key=${API_KEY}`;
-    console.log("🔵 [loadDataFromSheet] Leyendo desde A1");
-    const response = await fetch(url, { cache: 'no-store' });
-    
-    if (!response.ok) {
-      throw new Error(`Error HTTP: ${response.status}`);
-    }
-    
-    const result = await response.json();
-    console.log("🔵 [loadDataFromSheet] Resultado:", result.values ? ("datos en A1") : "vacío");
-    let members = [];
-    let brands = [];
-    let assignments = {};
-    let memberDetails = {};
-    
-    if (result.values && result.values[0] && result.values[0][0]) {
-      const jsonString = result.values[0][0];
-      const sheetData = _decompressData(JSON.parse(jsonString));
-      members = Array.isArray(sheetData.members) ? sheetData.members : [];
-      brands = Array.isArray(sheetData.brands) ? sheetData.brands : [];
-      assignments = sheetData.assignments || {};
-      memberDetails = sheetData.memberDetails || {};
-      // Also check if members/brands were saved inside assignments as _config
-      if (assignments._config) {
-        if (Array.isArray(assignments._config.members) && assignments._config.members.length) members = assignments._config.members;
-        if (Array.isArray(assignments._config.brands) && assignments._config.brands.length) brands = assignments._config.brands;
-        delete assignments._config;
-      }
-      // If _config had no members, fall back to extracting from assignment keys
-      if (!members.length && Object.keys(assignments).length) {
-        const memberSet = new Set();
-        for (const dayKey of Object.keys(assignments)) {
-          for (const name of Object.keys(assignments[dayKey])) {
-            memberSet.add(name);
-          }
-        }
-        members = [...memberSet];
-        console.log("✅ Members extraídos de assignments (fallback): " + members.length);
-      }
-      console.log("✅ Datos cargados del Sheet: " + members.length + " miembros, " + brands.length + " marcas, " + Object.keys(assignments).length + " días");
-    } else {
-      console.warn("⚠️ Celda A1 vacía — se inicializará con datos en blanco");
-    }
-
-    window.PRELOADED_DATA = { members, brands, assignments, memberDetails };
-    return true;
-    
-  } catch (error) {
-    console.error("❌ Error al cargar Sheet:", error.message);
-    window.PRELOADED_DATA = { members: [], brands: [], assignments: {} };
-    console.warn("⚠️ Sheet no disponible — datos vacíos");
-    return false;
-  }
-}
-
-/**
- * Sends a day to Google Sheet via fetch GET (GET survives 302 redirects)
- */
-let _pendingDays = new Set();
 let _syncTimer = null;
 let _pendingResolvers = [];
 let _flushing = false;
 
-/**
- * Compress assignments before saving to Sheets.
- * Skips empty member-days (all null/LUNCH) and encodes slot arrays as compact strings.
- * Reduces size from ~163KB to ~5-10KB, well under the 50,000-char Sheets cell limit.
- *   null → '.'   LUNCH → 'L'   brandId → 'Bn' (e.g., 'B0', 'B1', 'B2')
- */
-function _compressData(data) {
-  const out = {
-    _v: 2,
-    members: data.members,
-    brands: data.brands,
-    memberDetails: data.memberDetails || {},
-    assignments: {}
+function createEmptyPreloadedData() {
+  return {
+    members: [],
+    brands: [],
+    assignments: {},
+    memberDetails: {}
   };
-
-  // Build brand ID → index map
-  const brandMap = {};
-  if (Array.isArray(data.brands)) {
-    for (let i = 0; i < data.brands.length; i++) {
-      brandMap[data.brands[i].id] = 'B' + i;
-    }
-  }
-
-  for (const day of Object.keys(data.assignments)) {
-    if (day === '_config') {
-      out.assignments._config = data.assignments._config;
-      continue;
-    }
-    const dayObj = data.assignments[day];
-    if (!dayObj || typeof dayObj !== 'object') continue;
-
-    const compDay = {};
-    for (const member of Object.keys(dayObj)) {
-      const slots = dayObj[member];
-      if (!Array.isArray(slots)) continue;
-      // Skip member-days with no brand assignments (only null/LUNCH)
-      if (!slots.some(v => v !== null && v !== undefined && v !== 'LUNCH')) continue;
-      compDay[member] = slots.map(v => {
-        if (v === null || v === undefined) return '.';
-        if (v === 'LUNCH') return 'L';
-        return brandMap[v] || '.';
-      }).join('');
-    }
-    if (Object.keys(compDay).length > 0) {
-      out.assignments[day] = compDay;
-    }
-  }
-  return out;
 }
 
-/**
- * Decompress data saved in v2 compact format back to slot arrays.
- * Days/members missing from compressed data are reconstructed by the app as empty.
- */
-function _decompressData(data) {
-  if (!data || !data._v || data._v < 2) return data; // already expanded
-  const out = {
-    members: data.members || [],
-    brands: data.brands || [],
-    memberDetails: data.memberDetails || {},
-    assignments: {}
-  };
-  
-  // Build brand index → ID map
-  const brandIds = {};
-  if (Array.isArray(data.brands)) {
-    for (let i = 0; i < data.brands.length; i++) {
-      brandIds['B' + i] = data.brands[i].id;
-    }
-  }
+function normalizeRemoteState(data) {
+  const normalized = createEmptyPreloadedData();
+  if (!data || typeof data !== "object") return normalized;
 
-  for (const day of Object.keys(data.assignments)) {
-    if (day === '_config') {
-      out.assignments._config = data.assignments._config;
+  normalized.members = Array.isArray(data.members)
+    ? data.members.filter((member) => typeof member === "string" && member.trim())
+    : [];
+
+  normalized.brands = Array.isArray(data.brands)
+    ? data.brands
+        .filter((brand) => brand && typeof brand === "object" && typeof brand.id === "string")
+        .map((brand) => ({
+          id: brand.id,
+          name: typeof brand.name === "string" ? brand.name : "",
+          color: typeof brand.color === "string" ? brand.color : "#CCCCCC",
+          billingCode: typeof brand.billingCode === "string"
+            ? brand.billingCode
+            : (typeof brand.billing_code === "string" ? brand.billing_code : "")
+        }))
+    : [];
+
+  normalized.assignments = data.assignments && typeof data.assignments === "object"
+    ? data.assignments
+    : {};
+
+  normalized.memberDetails = data.memberDetails && typeof data.memberDetails === "object"
+    ? data.memberDetails
+    : {};
+
+  return normalized;
+}
+
+function normalizeKey(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function buildInFilter(values) {
+  return `in.(${values.join(",")})`;
+}
+
+function chunkArray(items, size) {
+  const chunks = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
+}
+
+function isRealAssignmentValue(value) {
+  return value !== null && value !== undefined && value !== "" && value !== "." && value !== "LUNCH";
+}
+
+function decodeAssignmentPattern(pattern, brandsByLegacyIndex) {
+  if (typeof pattern !== "string" || !pattern) return [];
+
+  const slots = [];
+  let index = 0;
+
+  while (index < pattern.length) {
+    const char = pattern[index];
+
+    if (char === ".") {
+      slots.push(null);
+      index += 1;
       continue;
     }
-    out.assignments[day] = {};
-    for (const member of Object.keys(data.assignments[day])) {
-      const val = data.assignments[day][member];
-      if (typeof val !== 'string') { out.assignments[day][member] = val; continue; }
-      // Parse multi-char tokens: '.' → null, 'L' → LUNCH, 'B0'/'B1'/... → brandId
-      const slots = [];
-      let i = 0;
-      while (i < val.length) {
-        const c = val[i];
-        if (c === '.') { slots.push(null); i++; }
-        else if (c === 'L') { slots.push('LUNCH'); i++; }
-        else if (c === 'B') {
-          let j = i + 1;
-          while (j < val.length && val[j] >= '0' && val[j] <= '9') j++;
-          slots.push(brandIds[val.substring(i, j)] || null);
-          i = j;
-        } else {
-          slots.push(null); i++;
-        }
+
+    if (char === "L") {
+      slots.push("LUNCH");
+      index += 1;
+      continue;
+    }
+
+    if (char === "B") {
+      let nextIndex = index + 1;
+      while (nextIndex < pattern.length && /[0-9]/.test(pattern[nextIndex])) {
+        nextIndex += 1;
       }
-      out.assignments[day][member] = slots;
+
+      const legacyKey = pattern.slice(index + 1, nextIndex);
+      const brand = brandsByLegacyIndex.get(Number(legacyKey));
+      slots.push(brand ? brand.id : null);
+      index = nextIndex;
+      continue;
     }
+
+    slots.push(null);
+    index += 1;
   }
-  return out;
+
+  return slots;
 }
 
-function syncDataToSheet(state, changedDays) {
-  if (!WEB_APP_URL) {
-    console.warn("⚠️  Web App URL no configurada.");
-    return Promise.resolve(false);
+function encodeAssignmentPattern(slots, brandLegacyById) {
+  if (!Array.isArray(slots)) return "";
+
+  return slots
+    .map((value) => {
+      if (value === null || value === undefined || value === ".") return ".";
+      if (value === "LUNCH") return "L";
+
+      const legacyIndex = brandLegacyById.get(value);
+      return Number.isInteger(legacyIndex) ? `B${legacyIndex}` : ".";
+    })
+    .join("");
+}
+
+function normalizeSlots(slots) {
+  if (!Array.isArray(slots)) return [];
+
+  return slots.map((value) => {
+    if (value === undefined || value === ".") return null;
+    return value;
+  });
+}
+
+function buildFullState(state) {
+  return {
+    members: Array.isArray(state?.members) ? [...state.members] : [],
+    brands: Array.isArray(state?.brands)
+      ? state.brands.map((brand) => ({
+          id: brand.id,
+          name: brand.name,
+          color: brand.color,
+          billingCode: brand.billingCode || ""
+        }))
+      : [],
+    memberDetails: state?.memberDetails && typeof state.memberDetails === "object"
+      ? { ...state.memberDetails }
+      : {},
+    assignments: state?.assignments && typeof state.assignments === "object"
+      ? state.assignments
+      : {}
+  };
+}
+
+function getSupabaseConfig() {
+  if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) return null;
+
+  return {
+    url: SUPABASE_URL.replace(/\/$/, ""),
+    key: SUPABASE_PUBLISHABLE_KEY
+  };
+}
+
+async function supabaseRequest(path, init = {}) {
+  const config = getSupabaseConfig();
+  if (!config) {
+    throw new Error("Supabase no esta configurado.");
   }
 
-  if (changedDays) {
-    if (Array.isArray(changedDays)) {
-      for (const d of changedDays) _pendingDays.add(d);
-    } else {
-      _pendingDays.add(changedDays);
+  const headers = {
+    apikey: config.key,
+    Authorization: `Bearer ${config.key}`,
+    "Content-Type": "application/json",
+    ...init.headers
+  };
+
+  const response = await fetch(`${config.url}/rest/v1/${path}`, {
+    ...init,
+    headers
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Supabase ${response.status}: ${errorText}`);
+  }
+
+  if (response.status === 204) {
+    return null;
+  }
+
+  const text = await response.text();
+  return text ? JSON.parse(text) : null;
+}
+
+async function loadDirectState() {
+  const [members, brands, assignments] = await Promise.all([
+    supabaseRequest(
+      "members?select=id,employee_code,name,active&active=eq.true&order=created_at.asc"
+    ),
+    supabaseRequest(
+      "brands?select=id,legacy_index,name,color,billing_code,active&active=eq.true&order=legacy_index.asc"
+    ),
+    supabaseRequest(
+      `daily_assignments?select=work_date,member_id,assignment_pattern,slots&work_date=gte.${DEFAULT_MIN_DATE}&work_date=lte.${DEFAULT_MAX_DATE}&order=work_date.asc`
+    )
+  ]);
+
+  const brandsByLegacyIndex = new Map();
+  const membersById = new Map();
+
+  const normalizedMembers = Array.isArray(members)
+    ? members.map((member) => {
+        membersById.set(member.id, member);
+        return member.name;
+      })
+    : [];
+
+  const memberDetails = {};
+  for (const member of members || []) {
+    memberDetails[member.name] = {
+      memberId: member.employee_code || ""
+    };
+  }
+
+  const normalizedBrands = Array.isArray(brands)
+    ? brands.map((brand) => {
+        brandsByLegacyIndex.set(brand.legacy_index, brand);
+        return {
+          id: brand.id,
+          name: brand.name,
+          color: brand.color,
+          billingCode: brand.billing_code || ""
+        };
+      })
+    : [];
+
+  const normalizedAssignments = {};
+  for (const row of assignments || []) {
+    const member = membersById.get(row.member_id);
+    if (!member) continue;
+
+    normalizedAssignments[row.work_date] ||= {};
+    normalizedAssignments[row.work_date][member.name] = Array.isArray(row.slots)
+      ? normalizeSlots(row.slots)
+      : decodeAssignmentPattern(row.assignment_pattern, brandsByLegacyIndex);
+  }
+
+  return {
+    members: normalizedMembers,
+    brands: normalizedBrands,
+    assignments: normalizedAssignments,
+    memberDetails
+  };
+}
+
+function buildMemberRecords(state, existingMembers) {
+  const byEmployeeCode = new Map();
+  const byName = new Map();
+
+  for (const member of existingMembers) {
+    if (member.employee_code) byEmployeeCode.set(member.employee_code, member);
+    byName.set(normalizeKey(member.name), member);
+  }
+
+  const records = [];
+  for (const memberName of state.members || []) {
+    if (typeof memberName !== "string" || !memberName.trim()) continue;
+
+    const employeeCode = String(state.memberDetails?.[memberName]?.memberId || "").trim() || null;
+    const existing = (employeeCode && byEmployeeCode.get(employeeCode)) || byName.get(normalizeKey(memberName));
+
+    records.push({
+      ...(existing?.id ? { id: existing.id } : {}),
+      employee_code: employeeCode,
+      name: memberName,
+      active: true
+    });
+  }
+
+  return records;
+}
+
+async function saveMembers(memberRecords) {
+  const savedMembers = [];
+
+  const recordsWithId = memberRecords
+    .filter((record) => record.id)
+    .map((record) => ({
+      id: record.id,
+      employee_code: record.employee_code,
+      name: record.name,
+      active: record.active
+    }));
+
+  const recordsWithEmployeeCode = memberRecords
+    .filter((record) => !record.id && record.employee_code)
+    .map((record) => ({
+      employee_code: record.employee_code,
+      name: record.name,
+      active: record.active
+    }));
+
+  const recordsWithoutIdOrEmployeeCode = memberRecords
+    .filter((record) => !record.id && !record.employee_code)
+    .map((record) => ({
+      name: record.name,
+      active: record.active
+    }));
+
+  for (const batch of chunkArray(recordsWithId, 250)) {
+    const result = await supabaseRequest(
+      "members?on_conflict=id&select=id,employee_code,name,active",
+      {
+        method: "POST",
+        headers: {
+          Prefer: "resolution=merge-duplicates,return=representation"
+        },
+        body: JSON.stringify(batch)
+      }
+    );
+    savedMembers.push(...(result || []));
+  }
+
+  for (const batch of chunkArray(recordsWithEmployeeCode, 250)) {
+    const result = await supabaseRequest(
+      "members?on_conflict=employee_code&select=id,employee_code,name,active",
+      {
+        method: "POST",
+        headers: {
+          Prefer: "resolution=merge-duplicates,return=representation"
+        },
+        body: JSON.stringify(batch)
+      }
+    );
+    savedMembers.push(...(result || []));
+  }
+
+  for (const batch of chunkArray(recordsWithoutIdOrEmployeeCode, 250)) {
+    const result = await supabaseRequest(
+      "members?select=id,employee_code,name,active",
+      {
+        method: "POST",
+        headers: {
+          Prefer: "return=representation"
+        },
+        body: JSON.stringify(batch)
+      }
+    );
+    savedMembers.push(...(result || []));
+  }
+
+  return savedMembers;
+}
+
+function buildBrandRecords(state, existingBrands) {
+  const byId = new Map(existingBrands.map((brand) => [brand.id, brand]));
+  const usedLegacyIndexes = new Set(existingBrands.map((brand) => brand.legacy_index));
+  let nextLegacyIndex = existingBrands.reduce(
+    (max, brand) => Math.max(max, Number.isInteger(brand.legacy_index) ? brand.legacy_index : -1),
+    -1
+  ) + 1;
+
+  return (state.brands || [])
+    .filter((brand) => brand && typeof brand.id === "string")
+    .map((brand) => {
+      const existing = byId.get(brand.id);
+      let legacyIndex = existing?.legacy_index;
+
+      if (!Number.isInteger(legacyIndex)) {
+        while (usedLegacyIndexes.has(nextLegacyIndex)) {
+          nextLegacyIndex += 1;
+        }
+        legacyIndex = nextLegacyIndex;
+        usedLegacyIndexes.add(legacyIndex);
+        nextLegacyIndex += 1;
+      }
+
+      return {
+        id: brand.id,
+        legacy_index: legacyIndex,
+        name: brand.name || "",
+        color: brand.color || "#CCCCCC",
+        billing_code: brand.billingCode || null,
+        active: true
+      };
+    });
+}
+
+async function saveDirectState(state) {
+  const safeState = buildFullState(state);
+
+  const [existingMembers, existingBrands] = await Promise.all([
+    supabaseRequest("members?select=id,employee_code,name,active"),
+    supabaseRequest("brands?select=id,legacy_index,name,color,billing_code,active")
+  ]);
+
+  const memberRecords = buildMemberRecords(safeState, existingMembers || []);
+  const brandRecords = buildBrandRecords(safeState, existingBrands || []);
+
+  const savedMembers = memberRecords.length
+    ? await saveMembers(memberRecords)
+    : [];
+
+  const savedBrands = brandRecords.length
+    ? await supabaseRequest("brands?on_conflict=id&select=id,legacy_index,name,color,billing_code,active", {
+        method: "POST",
+        headers: {
+          Prefer: "resolution=merge-duplicates,return=representation"
+        },
+        body: JSON.stringify(brandRecords)
+      })
+    : [];
+
+  const activeMemberIds = new Set((savedMembers || []).map((member) => member.id));
+  const activeBrandIds = new Set((savedBrands || []).map((brand) => brand.id));
+
+  const staleMemberIds = (existingMembers || [])
+    .map((member) => member.id)
+    .filter((id) => !activeMemberIds.has(id));
+  const staleBrandIds = (existingBrands || [])
+    .map((brand) => brand.id)
+    .filter((id) => !activeBrandIds.has(id));
+
+  if (staleMemberIds.length) {
+    await supabaseRequest(`members?id=${buildInFilter(staleMemberIds)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ active: false })
+    });
+  }
+
+  if (staleBrandIds.length) {
+    await supabaseRequest(`brands?id=${buildInFilter(staleBrandIds)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ active: false })
+    });
+  }
+
+  const memberIdByName = new Map((savedMembers || []).map((member) => [member.name, member.id]));
+  const brandLegacyById = new Map((savedBrands || []).map((brand) => [brand.id, brand.legacy_index]));
+  const assignmentDates = Object.keys(safeState.assignments || {}).sort();
+  const minDate = assignmentDates[0] || DEFAULT_MIN_DATE;
+  const maxDate = assignmentDates[assignmentDates.length - 1] || DEFAULT_MAX_DATE;
+
+  await supabaseRequest(
+    `daily_assignments?work_date=gte.${minDate}&work_date=lte.${maxDate}`,
+    {
+      method: "DELETE",
+      headers: {
+        Prefer: "return=minimal"
+      }
+    }
+  );
+
+  const assignmentRows = [];
+  for (const [workDate, dayAssignments] of Object.entries(safeState.assignments || {})) {
+    if (!dayAssignments || typeof dayAssignments !== "object") continue;
+
+    for (const memberName of safeState.members) {
+      const memberId = memberIdByName.get(memberName);
+      const slots = normalizeSlots(dayAssignments[memberName]);
+      if (!memberId || !slots.some(isRealAssignmentValue)) continue;
+
+      assignmentRows.push({
+        work_date: workDate,
+        member_id: memberId,
+        assignment_pattern: encodeAssignmentPattern(slots, brandLegacyById),
+        slots
+      });
     }
   }
 
-  _pendingDays.add("_config");
+  for (const batch of chunkArray(assignmentRows, 250)) {
+    await supabaseRequest(
+      "daily_assignments?on_conflict=work_date,member_id",
+      {
+        method: "POST",
+        headers: {
+          Prefer: "resolution=merge-duplicates,return=minimal"
+        },
+        body: JSON.stringify(batch)
+      }
+    );
+  }
 
-  const promise = new Promise(resolve => _pendingResolvers.push(resolve));
+  return {
+    members: (savedMembers || []).length,
+    brands: (savedBrands || []).length,
+    assignments: assignmentRows.length
+  };
+}
+
+async function loadDataFromSheet() {
+  const config = getSupabaseConfig();
+
+  if (!config) {
+    console.warn("Supabase no configurado; la app usara los datos embebidos.");
+    window.PRELOADED_DATA = normalizeRemoteState(window.PRELOADED_DATA);
+    return false;
+  }
+
+  try {
+    const data = await loadDirectState();
+    window.PRELOADED_DATA = normalizeRemoteState(data);
+    console.log(
+      `Supabase cargado: ${data.members.length} miembros, ${data.brands.length} marcas, ${Object.keys(data.assignments).length} dias`
+    );
+    return true;
+  } catch (error) {
+    console.error("Error cargando Supabase:", error.message);
+    window.PRELOADED_DATA = normalizeRemoteState(window.PRELOADED_DATA);
+    return false;
+  }
+}
+
+function syncDataToSheet(state) {
+  const promise = new Promise((resolve) => _pendingResolvers.push(resolve));
 
   clearTimeout(_syncTimer);
-  _syncTimer = setTimeout(() => _flushPendingDays(state), 2000);
+  _syncTimer = setTimeout(() => {
+    _flushPendingState(state);
+  }, 2000);
+
   return promise;
 }
 
-async function _flushPendingDays(state) {
+async function _flushPendingState(state) {
   if (_flushing) {
     clearTimeout(_syncTimer);
-    _syncTimer = setTimeout(() => _flushPendingDays(state), 1000);
+    _syncTimer = setTimeout(() => {
+      _flushPendingState(state);
+    }, 800);
     return;
   }
 
   _flushing = true;
   try {
-    _pendingDays.clear();
     const resolvers = _pendingResolvers.splice(0);
-
-    // Always send full state — avoids read-modify-write race condition
-    console.log("🔄 Sincronizando estado completo al Sheet...");
     const result = await _sendFullState(state);
-
-    if (result.ok) {
-      console.log("✅ Estado sincronizado correctamente");
-    } else {
-      console.error("⚠️ Error sincronizando: " + result.error);
-    }
-    resolvers.forEach(r => r(result.ok));
+    resolvers.forEach((resolve) => resolve(result.ok));
   } finally {
     _flushing = false;
-    if (_pendingDays.size > 0) {
-      clearTimeout(_syncTimer);
-      _syncTimer = setTimeout(() => _flushPendingDays(state), 500);
-    }
   }
 }
 
-/**
- * Send full state in a single GET request (avoids CORS issues)
- */
 async function _sendFullState(state) {
-  console.log("🔍 [_sendFullState] state.members:", state.members.length);
-  console.log("🔍 [_sendFullState] state.brands:", state.brands.length);
-  console.log("🔍 [_sendFullState] state.assignments keys:", Object.keys(state.assignments || {}).length);
-  
-  // Build complete data
-  const fullData = {
-    members: state.members,
-    brands: state.brands,
-    memberDetails: state.memberDetails || {},
-    assignments: {}
-  };
-  fullData.assignments._config = { members: state.members, brands: state.brands };
-  for (const key of Object.keys(state.assignments)) {
-    fullData.assignments[key] = state.assignments[key];
-  }
-  
-  const compressed = _compressData(fullData);
-  const jsonStr = JSON.stringify(compressed);
-  console.log("📤 Datos: " + Math.round(jsonStr.length / 1024) + "KB (comprimido), " + jsonStr.length + " chars");
-
-  // Send via POST to Apps Script doPost handler
   try {
-    const postData = {
-      action: "saveData",
-      data: compressed
-    };
-
-    console.log("📡 Enviando datos al Apps Script via POST...");
-    
-    // Try normal POST first (will fail if proxy not set up, but we'll continue anyway)
-    try {
-      const response = await fetch(WEB_APP_URL, { 
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(postData)
-      });
-
-      if (response.ok) {
-        const result = await response.json();
-        if (result.success) {
-          console.log("✅ Guardado exitoso via POST: " + jsonStr.length + " caracteres");
-          return { ok: true };
-        }
-      }
-    } catch (fetchErr) {
-      console.warn("⚠️ POST falló (posible CORS), intentando fallback...", fetchErr.message);
-    }
-
-    // If POST fails, try no-cors mode as fallback  
-    try {
-      const noCorsResponse = await fetch(WEB_APP_URL, { 
-        method: "POST",
-        body: JSON.stringify(postData),
-        mode: 'no-cors'
-      });
-      // no-cors doesn't let us read response, but request goes through
-      console.log("✅ Datos enviados via POST no-cors (respuesta no verificable)");
-      return { ok: true };
-    } catch (noCorsErr) {
-      console.error("❌ Ambos intentos fallaron");
-      return { ok: false, error: noCorsErr.message };
-    }
-    
+    const summary = await saveDirectState(state);
+    console.log(
+      `Supabase sincronizado correctamente: ${summary.members} miembros, ${summary.brands} marcas, ${summary.assignments} asignaciones`
+    );
+    return { ok: true };
   } catch (error) {
-    console.error("❌ Error en _sendFullState:", error.message);
-    return { ok: false, error: error.message };
+    console.error("Error sincronizando Supabase:", error.message);
+    return {
+      ok: false,
+      error: error.message
+    };
   }
 }
 
-// DEPRECATED: This verification is no longer used because Sheets API caches reads for 30-60 seconds,
-// making post-write verification unreliable. We now trust Apps Script's successful response.
-/*
-async function _verifySheetSave(expectedJsonStr) {
-  try {
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${SHEET_NAME}!${SHEET_RANGE}?key=${API_KEY}`;
-    const response = await fetch(url, { cache: 'no-store' });
-    if (!response.ok) return false;
-    const result = await response.json();
-    if (!result.values || !result.values[0] || !result.values[0][0]) return false;
-    const savedJson = result.values[0][0];
-    const expectedData = _decompressData(JSON.parse(expectedJsonStr));
-    const savedData = _decompressData(JSON.parse(savedJson));
-    const expectedSlots = _countAssignedSlots(expectedData);
-    const savedSlots = _countAssignedSlots(savedData);
-    const ok = expectedSlots === savedSlots;
-    if (ok) console.log(`✅ Verificación exitosa: ${savedSlots} slots asignados en Sheet`);
-    else console.warn(`⚠️ Verificación: esperado ${expectedSlots} slots, Sheet tiene ${savedSlots}`);
-    return ok;
-  } catch (e) {
-    console.warn("⚠️ No se pudo verificar el guardado:", e.message);
-    return true; // don't block on network error during verify
-  }
-}
-*/
-
-// Full sync helper
 async function fullSyncToSheet() {
-  if (!WEB_APP_URL) {
-    console.error("❌ Web App URL no configurada");
-    return false;
-  }
-  const currentState = (typeof state !== 'undefined') ? state : null;
-  if (!currentState) {
-    console.error("❌ No hay datos para sincronizar");
-    return false;
-  }
+  const currentState = typeof state !== "undefined" ? state : null;
+  if (!currentState) return false;
+
   const result = await _sendFullState(currentState);
   return result.ok;
 }
 
-/**
- * Configure the API Key, Web App URL, and optional Proxy URL
- */
-function configureSheetSync(apiKey, webAppUrl, proxyUrl = null) {
-  API_KEY = apiKey;
-  WEB_APP_URL = webAppUrl;
-  PROXY_URL = proxyUrl;
-  console.log('🔧 Sync configured:', { WEB_APP_URL: !!WEB_APP_URL, PROXY_URL: !!PROXY_URL });
+function configureSupabaseSync(options = {}) {
+  if (typeof options === "string") {
+    SUPABASE_URL = options;
+    return;
+  }
+
+  SUPABASE_URL = typeof options.url === "string" ? options.url : null;
+  SUPABASE_PUBLISHABLE_KEY = typeof options.publishableKey === "string"
+    ? options.publishableKey
+    : null;
 }
 
-/**
- * Initialize the app - always loads from Sheet first
- */
+function configureSheetSync(arg1, arg2) {
+  if (typeof arg1 === "object" && arg1 !== null) {
+    configureSupabaseSync(arg1);
+    return;
+  }
+
+  configureSupabaseSync({
+    url: typeof arg1 === "string" ? arg1 : null,
+    publishableKey: typeof arg2 === "string" ? arg2 : null
+  });
+}
+
 async function initializeApp() {
   await loadDataFromSheet();
-  
+
   if (typeof init === "function") {
     init();
   }
 }
 
-// Auto-load when DOM is ready
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", initializeApp);
 } else {
   initializeApp();
 }
-
