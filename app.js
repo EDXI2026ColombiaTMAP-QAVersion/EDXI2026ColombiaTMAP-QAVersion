@@ -169,6 +169,10 @@ let _brandModalResolve = null;
 
 // Import brands modal refs
 let importBrandsModal, importBrandsInput, importBrandsOk, importBrandsCancel, importBrandsBtn;
+const DISABLED_FEATURES = {
+  importBrands: true,
+  importExcel: true
+};
 
 // Member modal refs
 let memberModal, memberModalName, memberModalId, memberModalSave, memberModalCancel;
@@ -250,6 +254,8 @@ function init() {
   importBrandsCancel.addEventListener("click", () => { importBrandsModal.hidden = true; });
   importBrandsModal.addEventListener("click", (e) => { if (e.target === importBrandsModal) importBrandsModal.hidden = true; });
 
+  applyFeatureLocks();
+
   applyTheme(safeStorage.getItem(THEME_STORAGE_KEY) === "dark" ? "dark" : "light", false);
   renderMonthTabs();
   updateScheduleTitle();
@@ -271,6 +277,23 @@ function init() {
     window.visualViewport.addEventListener("resize", () => {
       window.requestAnimationFrame(updateTableSizing);
     });
+  }
+}
+
+function lockButton(button, message) {
+  if (!button) return;
+  button.disabled = true;
+  button.setAttribute("aria-disabled", "true");
+  button.title = message;
+}
+
+function applyFeatureLocks() {
+  if (DISABLED_FEATURES.importBrands) {
+    lockButton(importBrandsBtn, "Import Brands is currently disabled");
+  }
+
+  if (DISABLED_FEATURES.importExcel) {
+    lockButton(importJsonBtn, "Import Excel is currently disabled");
   }
 }
 
