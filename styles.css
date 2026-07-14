@@ -461,6 +461,10 @@ body[data-theme="dark"] textarea::placeholder {
   border-radius: 5px;
 }
 
+.brand-item.brand-item-unassigned {
+  border-bottom: 1px solid #020028;
+}
+
 .brand-item input {
   margin: 0;
 }

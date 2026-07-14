@@ -615,9 +615,28 @@ function getTimeOffBrand() {
     || null;
 }
 
+function getAssignedBrandIds() {
+  const assignedBrandIds = new Set();
+
+  for (const dayAssignments of Object.values(state.assignments || {})) {
+    if (!dayAssignments || typeof dayAssignments !== "object") continue;
+
+    for (const memberSlots of Object.values(dayAssignments)) {
+      if (!Array.isArray(memberSlots)) continue;
+
+      for (const brandId of memberSlots) {
+        if (brandId) assignedBrandIds.add(brandId);
+      }
+    }
+  }
+
+  return assignedBrandIds;
+}
+
 function renderPalette() {
   brandPalette.innerHTML = "";
   const timeOffBrand = getTimeOffBrand();
+  const assignedBrandIds = getAssignedBrandIds();
   for (const brand of state.brands) {
     if (timeOffBrand && brand.id === timeOffBrand.id) continue;
 
@@ -638,6 +657,9 @@ function renderPalette() {
     radio.checked = paintMode === "brand" && selectedBrandId === brand.id;
     swatch.style.background = brand.color;
     name.textContent = brand.name;
+    if (!assignedBrandIds.has(brand.id)) {
+      node.classList.add("brand-item-unassigned");
+    }
     radio.addEventListener("change", () => {
       selectedBrandId = brand.id;
       paintMode = "brand";
