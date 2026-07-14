@@ -131,7 +131,7 @@ let selectedBrandId = null;
 let paintMode = "brand";
 let isMouseDown = false;
 let tableResizeObserver = null;
-let activeHoverGuides = { row: null, column: [] };
+let activeHoverGuides = { row: null };
 
 // DOM elements - initialized in init()
 let layoutMain;
@@ -153,6 +153,7 @@ let addMemberBtn;
 let removeMemberBtn;
 let addBrandBtn;
 let exportExcelBtn;
+let refreshDataBtn;
 let templateFileInput;
 let recurringBtn;
 let legendPanel;
@@ -212,6 +213,7 @@ function init() {
   removeMemberBtn = document.getElementById("removeMemberBtn");
   addBrandBtn = document.getElementById("addBrandBtn");
   exportExcelBtn = document.getElementById("exportExcelBtn");
+  refreshDataBtn = document.getElementById("refreshDataBtn");
   importJsonBtn = document.getElementById("importJsonBtn");
   importJsonFileInput = document.getElementById("importJsonFileInput");
   templateFileInput = document.getElementById("templateFileInput");
@@ -533,6 +535,55 @@ function saveState(changedDay) {
   return Promise.resolve(true);
 }
 
+function rebuildStateFromPreloadedData() {
+  const { members: defaultMembers, brands: defaultBrands, pre: PRELOADED } = resolveDefaults();
+  state = createInitialState(defaultMembers, defaultBrands, PRELOADED);
+
+  if (PRELOADED?.assignments) {
+    mergeSheetIntoState(state, PRELOADED, defaultMembers);
+  }
+
+  if (!state.memberDetails) {
+    state.memberDetails = {};
+  }
+
+  if (!state.brands.find((brand) => brand.id === selectedBrandId)) {
+    selectedBrandId = state.brands[0]?.id || null;
+  }
+  state.selectedBrandId = selectedBrandId;
+  safeStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+async function refreshFromCloud() {
+  if (!refreshDataBtn) return;
+
+  refreshDataBtn.disabled = true;
+  refreshDataBtn.textContent = "Refreshing...";
+
+  try {
+    if (typeof window.reloadDataFromSource !== "function") {
+      throw new Error("Cloud refresh is not available.");
+    }
+
+    const ok = await window.reloadDataFromSource();
+    if (!ok) {
+      throw new Error("No se pudieron cargar los datos remotos.");
+    }
+
+    rebuildStateFromPreloadedData();
+    renderPalette();
+    renderTable();
+    renderTotals();
+    showToast("Data refreshed from cloud", "success");
+  } catch (error) {
+    console.error(error);
+    showToast(error.message || "Cloud refresh failed", "error");
+  } finally {
+    refreshDataBtn.disabled = false;
+    refreshDataBtn.textContent = "Refresh";
+  }
+}
+
 function applyTheme(theme, persist = true) {
   const nextTheme = theme === "dark" ? "dark" : "light";
   document.body.dataset.theme = nextTheme;
@@ -763,13 +814,10 @@ function clearHoverGuides() {
   if (activeHoverGuides.row) {
     activeHoverGuides.row.classList.remove("is-hover-row");
   }
-  for (const cell of activeHoverGuides.column) {
-    cell.classList.remove("is-hover-col", "is-hover-col-start", "is-hover-col-end");
-  }
   if (hoverRowGuide) {
     hoverRowGuide.hidden = true;
   }
-  activeHoverGuides = { row: null, column: [] };
+  activeHoverGuides = { row: null };
 }
 
 function ensureHoverGuide() {
@@ -804,28 +852,13 @@ function updateHoverGuides(cell) {
   }
 
   const sameRow = activeHoverGuides.row === row;
-  const sameColumn = activeHoverGuides.column.length
-    && activeHoverGuides.column.every((node) => (
-      node.dataset.weekIndex === weekIndex && node.dataset.columnIndex === columnIndex
-    ));
-  if (sameRow && sameColumn) return;
+  if (sameRow) return;
 
   clearHoverGuides();
 
   row.classList.add("is-hover-row");
   positionHoverRowGuide(row);
-  const columnCells = Array.from(
-    scheduleBody.querySelectorAll(`[data-week-index="${weekIndex}"][data-column-index="${columnIndex}"]`)
-  );
-  for (const columnCell of columnCells) {
-    columnCell.classList.add("is-hover-col");
-  }
-  if (columnCells.length) {
-    columnCells[0].classList.add("is-hover-col-start");
-    columnCells[columnCells.length - 1].classList.add("is-hover-col-end");
-  }
-
-  activeHoverGuides = { row, column: columnCells };
+  activeHoverGuides = { row };
 }
 
 function paintCell(cell, value, slotIndex) {
@@ -1188,6 +1221,10 @@ function attachEvents() {
       return;
     }
     await exportScheduleToNewExcel();
+  });
+
+  refreshDataBtn.addEventListener("click", async () => {
+    await refreshFromCloud();
   });
 
   importJsonBtn.addEventListener("click", () => {

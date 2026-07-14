@@ -602,6 +602,10 @@ async function initializeApp() {
   }
 }
 
+if (typeof window !== "undefined") {
+  window.reloadDataFromSource = loadDataFromSheet;
+}
+
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", initializeApp);
 } else {

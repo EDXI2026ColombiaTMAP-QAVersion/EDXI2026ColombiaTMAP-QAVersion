@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>I&amp;P DJE Studio Colombia | Timing MAP</title>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='18' fill='none' stroke='white' stroke-width='5'/%3E%3Cpath d='M32 32V20' stroke='white' stroke-width='5' stroke-linecap='round'/%3E%3Cpath d='M32 32l10 6' stroke='white' stroke-width='5' stroke-linecap='round'/%3E%3C/svg%3E" />
-    <link rel="stylesheet" href="./styles.css?v=2" />
+    <link rel="stylesheet" href="./styles.css?v=3" />
   </head>
   <body>
     <header class="topbar">
@@ -38,13 +38,14 @@
         <div id="monthTabs" class="month-tabs"></div>
 
         <div class="toolbar">
-          <button id="timeOffBtn" type="button" class="button-with-icon icon-time-off" title="Time Off">Time Off</button>
+          <button id="refreshDataBtn" type="button" class="button-with-icon icon-refresh">Refresh</button>
           <button id="eraserBtn" type="button" class="icon-button eraser-button" aria-label="Eraser" title="Eraser"></button>
+          <button id="timeOffBtn" type="button" class="button-with-icon icon-time-off" title="Time Off">Time Off</button>
+          <button id="recurringBtn" type="button" class="button-with-icon icon-calendar">Recurring Schedule</button>
           <button id="addBrandBtn" type="button" class="button-with-icon icon-plus">Add Brand</button>
           <button id="clearMonthBtn" type="button" class="button-with-icon icon-trash">Clear Full Month</button>
           <button id="addMemberBtn" type="button" class="button-with-icon icon-plus">Add Team Member</button>
           <button id="removeMemberBtn" type="button" class="button-with-icon icon-user-minus">Remove Team Member</button>
-          <button id="recurringBtn" type="button" class="button-with-icon icon-calendar">Recurring Schedule</button>
           <button id="exportExcelBtn" type="button" class="button-with-icon icon-sheet">Export Excel</button>
           <button id="importBrandsBtn" type="button" class="button-with-icon icon-upload">Import Brands</button>
           <button id="importJsonBtn" type="button" class="button-with-icon icon-upload">Import Excel</button>
@@ -190,7 +191,7 @@
     <script src="./sync-sheets.js?v=32"></script>
     <script src="./template-data.js?v=2"></script>
     <script src="https://unpkg.com/xlsx-populate/browser/xlsx-populate.min.js"></script>
-    <script src="./app.js?v=51"></script>
+    <script src="./app.js?v=52"></script>
     
     <script>
       configureSupabaseSync({
