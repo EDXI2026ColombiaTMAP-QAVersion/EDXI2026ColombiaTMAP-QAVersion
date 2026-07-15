@@ -52,7 +52,7 @@
 }
 
 body[data-theme="dark"] {
-  --bg: #0B1220;
+  --bg: #000000;
   --panel: #111827;
   --line: #2A3447;
   --text: #F3F6FB;
