@@ -354,6 +354,12 @@ function compareAvailabilityMemberOrder(a, b) {
   return a.localeCompare(b);
 }
 
+function compareAvailabilityRows(a, b) {
+  const totalDifference = b.total - a.total;
+  if (totalDifference !== 0) return totalDifference;
+  return compareAvailabilityMemberOrder(a.member, b.member);
+}
+
 function applyFeatureLocks() {
   if (DISABLED_FEATURES.clearMonth) {
     lockButton(clearMonthBtn, "Clear Full Month is currently disabled");
@@ -1512,6 +1518,9 @@ function attachEvents() {
 
 
   scheduleBody.addEventListener("mousedown", (event) => {
+    // Painting is exclusive to the primary (left) mouse button. A secondary
+    // click is reserved for the Lunch context menu below.
+    if (event.button !== 0 || event.ctrlKey) return;
     const cell = event.target.closest(".slot-cell");
     updateHoverGuides(cell);
     if (!cell || cell.classList.contains("lunch") || cell.classList.contains("foreign") || cell.classList.contains("holiday")) return;
@@ -1577,8 +1586,18 @@ function attachEvents() {
     lunchToggle.textContent = isLunchNow ? "Remove Lunch (work here)" : "Set as Lunch";
     _lunchCtx = { member, dayKey, slotIndex, cell };
     lunchMenu.style.display = "block";
-    lunchMenu.style.left = event.clientX + "px";
-    lunchMenu.style.top = event.clientY + "px";
+    const bodyZoom = parseFloat(getComputedStyle(document.body).zoom) || 1;
+    const menuPosition = calculateContextMenuPosition({
+      clientX: event.clientX,
+      clientY: event.clientY,
+      menuWidth: lunchMenu.offsetWidth,
+      menuHeight: lunchMenu.offsetHeight,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      zoom: bodyZoom
+    });
+    lunchMenu.style.left = `${menuPosition.left}px`;
+    lunchMenu.style.top = `${menuPosition.top}px`;
   });
 
   lunchToggle.addEventListener("click", async () => {
@@ -1601,6 +1620,30 @@ function attachEvents() {
   window.addEventListener("resize", () => {
     window.requestAnimationFrame(updateTableSizing);
   });
+}
+
+function calculateContextMenuPosition({
+  clientX,
+  clientY,
+  menuWidth,
+  menuHeight,
+  viewportWidth,
+  viewportHeight,
+  zoom = 1
+}) {
+  const safeZoom = Number.isFinite(zoom) && zoom > 0 ? zoom : 1;
+  const margin = 8;
+  const logicalViewportWidth = viewportWidth / safeZoom;
+  const logicalViewportHeight = viewportHeight / safeZoom;
+  const requestedLeft = clientX / safeZoom;
+  const requestedTop = clientY / safeZoom;
+  const maxLeft = Math.max(margin, logicalViewportWidth - menuWidth - margin);
+  const maxTop = Math.max(margin, logicalViewportHeight - menuHeight - margin);
+
+  return {
+    left: Math.min(Math.max(margin, requestedLeft), maxLeft),
+    top: Math.min(Math.max(margin, requestedTop), maxTop)
+  };
 }
 
 function updateTableSizing() {
@@ -1938,7 +1981,8 @@ async function exportAvailabilityToExcel() {
           const dailyValues = weekDays.map((day) => getAvailableHoursForMemberDay(member, day));
           const total = dailyValues.reduce((sum, dayValue) => sum + dayValue.total, 0);
           return { member, dailyValues, total };
-        });
+        })
+        .sort(compareAvailabilityRows);
 
       const weekTotals = Array.from({ length: 10 }, () => 0);
       let weekGrandTotal = 0;

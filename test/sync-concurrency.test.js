@@ -52,6 +52,71 @@ test("07:00, 07:30, 17:00 and 17:30 share the fringe treatment", () => {
   assert.equal(slotFlags["17:30"], true);
 });
 
+test("the Lunch menu position compensates for page zoom and viewport edges", () => {
+  const storage = createMemoryStorage();
+  const context = vm.createContext({
+    localStorage: storage,
+    window: { localStorage: storage }
+  });
+
+  vm.runInContext(
+    `${APP_SOURCE}\n;globalThis.__menuPositionForTests = calculateContextMenuPosition;`,
+    context,
+    { filename: APP_PATH }
+  );
+
+  const centered = context.__menuPositionForTests({
+    clientX: 425,
+    clientY: 255,
+    menuWidth: 160,
+    menuHeight: 40,
+    viewportWidth: 1200,
+    viewportHeight: 800,
+    zoom: 0.85
+  });
+  assert.equal(centered.left, 500);
+  assert.equal(centered.top, 300);
+
+  const atBottomRight = context.__menuPositionForTests({
+    clientX: 1195,
+    clientY: 795,
+    menuWidth: 160,
+    menuHeight: 40,
+    viewportWidth: 1200,
+    viewportHeight: 800,
+    zoom: 0.85
+  });
+  assert.ok(atBottomRight.left < 1200 / 0.85);
+  assert.ok(atBottomRight.top < 800 / 0.85);
+});
+
+test("availability rows are ordered from highest to lowest Grand Total", () => {
+  const storage = createMemoryStorage();
+  const context = vm.createContext({
+    localStorage: storage,
+    window: { localStorage: storage }
+  });
+
+  vm.runInContext(
+    `${APP_SOURCE}\n;globalThis.__availabilityComparatorForTests = compareAvailabilityRows;`,
+    context,
+    { filename: APP_PATH }
+  );
+
+  const rows = [
+    { member: "Daniela Mahecha", total: 4.5 },
+    { member: "Ana Piraquive", total: 15 },
+    { member: "Nicolas Lopez", total: 13 },
+    { member: "David Bautista", total: 6 }
+  ];
+  rows.sort(context.__availabilityComparatorForTests);
+
+  assert.deepEqual(
+    rows.map((row) => row.total),
+    [15, 13, 6, 4.5]
+  );
+});
+
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
