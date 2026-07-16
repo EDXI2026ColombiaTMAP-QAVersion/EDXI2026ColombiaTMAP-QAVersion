@@ -25,12 +25,16 @@ const safeStorage = {
 
 const STORAGE_KEY = "dxi-timing-map-2026-v13";
 const THEME_STORAGE_KEY = "dxi-theme";
+const GRID_STORAGE_KEY = "dxi-grid-lines";
 const MEMBER_TOTALS_EXPANDED_KEY = "dxi-member-totals-expanded";
 const SLOT_START_HOUR = 7;
-const SLOT_START_MINUTE = 30;
+const SLOT_START_MINUTE = 0;
 const SLOT_END_HOUR = 17;
-const SLOT_END_MINUTE = 0;
+const SLOT_END_MINUTE = 30;
 const SLOT_DURATION_MINUTES = 30;
+const CORE_DAY_START_MINUTES = 8 * 60;
+const CORE_DAY_END_MINUTES = 17 * 60;
+const APP_LEGACY_SLOT_COUNT = 20;
 
 const fallbackColors = ["#2D6A4F", "#1D3557", "#8F2D56", "#CA6702", "#6A4C93", "#264653", "#386641", "#9D4EDD"];
 const expandedMemberTotals = new Set(readStoredStringArray(MEMBER_TOTALS_EXPANDED_KEY));
@@ -130,6 +134,7 @@ let state = null;
 let selectedBrandId = null;
 let paintMode = "brand";
 let isMouseDown = false;
+let activePaintMember = null;
 let tableResizeObserver = null;
 let activeHoverGuides = { row: null };
 
@@ -138,6 +143,7 @@ let layoutMain;
 let totalsPanel;
 let toggleTotalsBtn;
 let themeToggleBtn;
+let gridToggleBtn;
 let tableWrap;
 let scheduleTable;
 let scheduleHead;
@@ -153,6 +159,7 @@ let addMemberBtn;
 let removeMemberBtn;
 let addBrandBtn;
 let exportExcelBtn;
+let exportAvailabilityBtn;
 let refreshDataBtn;
 let templateFileInput;
 let recurringBtn;
@@ -171,9 +178,37 @@ let _brandModalResolve = null;
 // Import brands modal refs
 let importBrandsModal, importBrandsInput, importBrandsOk, importBrandsCancel, importBrandsBtn;
 const DISABLED_FEATURES = {
+  clearMonth: true,
   importBrands: true,
   importExcel: true
 };
+const HIDDEN_FEATURES = {
+  addMember: true,
+  removeMember: true
+};
+const AVAILABILITY_MEMBER_ORDER = [
+  "Daniela Mahecha",
+  "Daniela Oliva",
+  "Laura Álvarez",
+  "Natalia Bolaño",
+  "Hernan Torres",
+  "Ana Piraquive",
+  "David Bautista",
+  "Nicolas Lopez",
+  "Natalia Sanchez",
+  "David Guzman",
+  "Gabriela Pelayo",
+  "Valentina Zarate",
+  "Felipe Mendez",
+  "Camila Martinez",
+  "William Franco",
+  "Kimberly Velasquez",
+  "Laura Gordillo",
+  "Camilo Hernandez"
+];
+const availabilityOrderIndex = new Map(
+  AVAILABILITY_MEMBER_ORDER.map((member, index) => [normalizeMemberName(member), index])
+);
 
 // Member modal refs
 let memberModal, memberModalName, memberModalId, memberModalSave, memberModalCancel;
@@ -198,6 +233,7 @@ function init() {
   totalsPanel = document.getElementById("totalsPanel");
   toggleTotalsBtn = document.getElementById("toggleTotalsBtn");
   themeToggleBtn = document.getElementById("themeToggleBtn");
+  gridToggleBtn = document.getElementById("gridToggleBtn");
   tableWrap = document.querySelector(".table-wrap");
   scheduleTable = document.getElementById("scheduleTable");
   scheduleHead = document.getElementById("scheduleHead");
@@ -213,6 +249,7 @@ function init() {
   removeMemberBtn = document.getElementById("removeMemberBtn");
   addBrandBtn = document.getElementById("addBrandBtn");
   exportExcelBtn = document.getElementById("exportExcelBtn");
+  exportAvailabilityBtn = document.getElementById("exportAvailabilityBtn");
   refreshDataBtn = document.getElementById("refreshDataBtn");
   importJsonBtn = document.getElementById("importJsonBtn");
   importJsonFileInput = document.getElementById("importJsonFileInput");
@@ -259,6 +296,7 @@ function init() {
   applyFeatureLocks();
 
   applyTheme(safeStorage.getItem(THEME_STORAGE_KEY) === "dark" ? "dark" : "light", false);
+  applyGridLines(safeStorage.getItem(GRID_STORAGE_KEY) === "on", false);
   renderMonthTabs();
   updateScheduleTitle();
   applyTotalsCollapse(safeStorage.getItem("dxi-totals-collapsed") === "1");
@@ -289,13 +327,52 @@ function lockButton(button, message) {
   button.title = message;
 }
 
+function hideButton(button) {
+  if (!button) return;
+  button.hidden = true;
+  button.disabled = true;
+  button.setAttribute("aria-hidden", "true");
+}
+
+function normalizeMemberName(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function compareAvailabilityMemberOrder(a, b) {
+  const aIndex = availabilityOrderIndex.get(normalizeMemberName(a));
+  const bIndex = availabilityOrderIndex.get(normalizeMemberName(b));
+  const aKnown = aIndex !== undefined;
+  const bKnown = bIndex !== undefined;
+
+  if (aKnown && bKnown) return aIndex - bIndex;
+  if (aKnown) return -1;
+  if (bKnown) return 1;
+  return a.localeCompare(b);
+}
+
 function applyFeatureLocks() {
+  if (DISABLED_FEATURES.clearMonth) {
+    lockButton(clearMonthBtn, "Clear Full Month is currently disabled");
+  }
+
   if (DISABLED_FEATURES.importBrands) {
     lockButton(importBrandsBtn, "Import Brands is currently disabled");
   }
 
   if (DISABLED_FEATURES.importExcel) {
     lockButton(importJsonBtn, "Import Excel is currently disabled");
+  }
+
+  if (HIDDEN_FEATURES.addMember) {
+    hideButton(addMemberBtn);
+  }
+
+  if (HIDDEN_FEATURES.removeMember) {
+    hideButton(removeMemberBtn);
   }
 }
 
@@ -309,7 +386,9 @@ function switchMonth(idx) {
   for (const day of weekdays) {
     state.assignments[day.key] ||= {};
     for (const member of state.members) {
-      state.assignments[day.key][member] ||= Array.from({ length: slots.length }, (_, i) => (lunchSlots.has(i) ? "LUNCH" : null));
+      state.assignments[day.key][member] = normalizeAssignmentSlots(
+        state.assignments[day.key][member]
+      );
     }
   }
 
@@ -356,10 +435,46 @@ function buildSlots() {
       hour,
       minute,
       isLunch: totalMinutes >= lunchStartMinutes && totalMinutes < lunchEndMinutes,
-      isFringe: totalMinutes === startMinutes || totalMinutes === endMinutes,
+      // Keep the original 07:30 and 17:00 fringe treatment while extending
+      // the visible schedule with the new 07:00 and 17:30 half-hours.
+      isFringe:
+        totalMinutes < CORE_DAY_START_MINUTES ||
+        totalMinutes >= CORE_DAY_END_MINUTES,
     });
   }
   return built;
+}
+
+function createEmptyAssignmentRow() {
+  return Array.from(
+    { length: slots.length },
+    (_, index) => (lunchSlots.has(index) ? "LUNCH" : null)
+  );
+}
+
+function normalizeAssignmentSlots(values) {
+  if (!Array.isArray(values) || values.length === 0) {
+    return createEmptyAssignmentRow();
+  }
+
+  let normalized = values.map((value) => (
+    value === undefined || value === "." ? null : value
+  ));
+
+  // The previous table covered 07:30-17:30 with 20 half-hour blocks.
+  // Preserve every existing time by adding 07:00 at the beginning and
+  // 17:30 at the end instead of shifting the stored assignments.
+  if (
+    normalized.length === APP_LEGACY_SLOT_COUNT &&
+    slots.length === APP_LEGACY_SLOT_COUNT + 2
+  ) {
+    normalized = [null, ...normalized, null];
+  }
+
+  return Array.from(
+    { length: slots.length },
+    (_, index) => normalized[index] ?? null
+  );
 }
 
 function buildMonthWeekdays(year, month) {
@@ -432,10 +547,10 @@ function createInitialState(defaultMembers, defaultBrands, PRELOADED) {
   for (const day of allWeekdays) {
     assignments[day.key] = {};
     for (const member of defaultMembers) {
-      let row = Array.from({ length: slots.length }, (_, i) => (lunchSlots.has(i) ? "LUNCH" : null));
+      let row = createEmptyAssignmentRow();
       if (PRELOADED?.assignments?.[day.key]?.[member]) {
         const pre = PRELOADED.assignments[day.key][member];
-        row = pre.map((v) => v || null);
+        row = normalizeAssignmentSlots(pre);
       }
       assignments[day.key][member] = row;
     }
@@ -458,7 +573,9 @@ function loadStateFromStorage(defaultBrands) {
     for (const day of allWeekdays) {
       parsed.assignments[day.key] ||= {};
       for (const member of parsed.members) {
-        parsed.assignments[day.key][member] ||= Array.from({ length: slots.length }, () => null);
+        parsed.assignments[day.key][member] = normalizeAssignmentSlots(
+          parsed.assignments[day.key][member]
+        );
         // lunch position is stored in the data — do not force override
       }
     }
@@ -501,7 +618,7 @@ function mergeSheetIntoState(state, PRELOADED, defaultMembers) {
       if (!state.members.includes(member)) continue; // skip deleted members
       const pre = sheetDay[member];
       if (Array.isArray(pre)) {
-        state.assignments[dayKey][member] = pre.map((v) => v || null);
+        state.assignments[dayKey][member] = normalizeAssignmentSlots(pre);
       }
     }
   }
@@ -519,18 +636,37 @@ function mergeSheetIntoState(state, PRELOADED, defaultMembers) {
   for (const day of allWeekdays) {
     state.assignments[day.key] ||= {};
     for (const member of state.members) {
-      state.assignments[day.key][member] ||= Array.from({ length: slots.length }, (_, i) => (lunchSlots.has(i) ? "LUNCH" : null));
+      state.assignments[day.key][member] = normalizeAssignmentSlots(
+        state.assignments[day.key][member]
+      );
     }
   }
 }
 
-function saveState(changedDay) {
+function assignmentRowsFor(days, members) {
+  const normalizedDays = Array.isArray(days) ? days : [days];
+  const normalizedMembers = Array.isArray(members) ? members : [members];
+  const rows = [];
+
+  for (const workDate of normalizedDays) {
+    if (typeof workDate !== "string" || !workDate) continue;
+    for (const member of normalizedMembers) {
+      if (typeof member !== "string" || !member) continue;
+      rows.push({ workDate, member });
+    }
+  }
+
+  return rows;
+}
+
+function saveState(changes = {}) {
   state.selectedBrandId = selectedBrandId;
   safeStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   
-  // Sync changes to Google Sheet — returns a Promise
+  // Sync only the explicitly changed Supabase rows. UI-only preferences have
+  // an empty change set and remain local, so they cannot overwrite shared data.
   if (typeof syncDataToSheet === "function") {
-    return syncDataToSheet(state, changedDay);
+    return syncDataToSheet(state, changes);
   }
   return Promise.resolve(true);
 }
@@ -561,6 +697,13 @@ async function refreshFromCloud() {
   refreshDataBtn.textContent = "Refreshing...";
 
   try {
+    if (typeof window.flushPendingScheduleChanges === "function") {
+      const pendingSaved = await window.flushPendingScheduleChanges();
+      if (!pendingSaved) {
+        throw new Error("Hay cambios pendientes. Se reintentaran antes de actualizar.");
+      }
+    }
+
     const reloadFromSource = window.reloadDataFromSource || window.loadDataFromSheet;
     if (typeof reloadFromSource !== "function") {
       throw new Error("Cloud refresh is not available.");
@@ -607,6 +750,25 @@ function applyTheme(theme, persist = true) {
 
 function toggleTheme() {
   applyTheme(document.body.dataset.theme === "dark" ? "light" : "dark");
+}
+
+function applyGridLines(enabled, persist = true) {
+  const gridEnabled = Boolean(enabled);
+  document.body.dataset.grid = gridEnabled ? "on" : "off";
+
+  if (gridToggleBtn) {
+    gridToggleBtn.setAttribute("aria-pressed", gridEnabled ? "true" : "false");
+    gridToggleBtn.setAttribute("aria-label", gridEnabled ? "Disable dark grid lines" : "Enable dark grid lines");
+    gridToggleBtn.title = gridEnabled ? "Disable dark grid lines" : "Enable dark grid lines";
+  }
+
+  if (persist) {
+    safeStorage.setItem(GRID_STORAGE_KEY, gridEnabled ? "on" : "off");
+  }
+}
+
+function toggleGridLines() {
+  applyGridLines(document.body.dataset.grid !== "on");
 }
 
 function getTimeOffBrand() {
@@ -684,6 +846,7 @@ function renderPalette() {
 
 function renderTable() {
   clearHoverGuides();
+  renderScheduleColGroup();
   scheduleHead.innerHTML = "";
   scheduleBody.innerHTML = "";
 
@@ -829,6 +992,36 @@ function renderTable() {
   updateTableSizing();
 }
 
+function renderScheduleColGroup() {
+  if (!scheduleTable) return;
+
+  scheduleTable.querySelector("colgroup")?.remove();
+
+  const maxWeekDays = weeks.reduce((max, week) => Math.max(max, week.length), 0);
+  if (!maxWeekDays) return;
+
+  const colGroup = document.createElement("colgroup");
+  const memberCol = document.createElement("col");
+  memberCol.style.width = "var(--member-col-width)";
+  colGroup.appendChild(memberCol);
+
+  for (let i = 0; i < maxWeekDays; i += 1) {
+    for (let j = 0; j < slots.length; j += 1) {
+      const slotCol = document.createElement("col");
+      slotCol.style.width = "var(--slot-width)";
+      colGroup.appendChild(slotCol);
+    }
+
+    if (i < maxWeekDays - 1) {
+      const gapCol = document.createElement("col");
+      gapCol.style.width = "var(--day-gap-width)";
+      colGroup.appendChild(gapCol);
+    }
+  }
+
+  scheduleTable.insertBefore(colGroup, scheduleTable.firstChild);
+}
+
 function compactSlotLabel(slot) {
   return slot.minute === 0 ? String(slot.hour) : `${slot.hour}.5`;
 }
@@ -890,8 +1083,9 @@ function paintCell(cell, value, slotIndex) {
   const endLabel = getSlotEndLabel(slotIndex);
   const slotLabel = startLabel && endLabel ? `${startLabel}-${endLabel}` : startLabel;
   if (!value) {
-    // The first and last half-hour bands are shown muted by default.
-    const bgColor = (slotIndex === 0 || slotIndex === slots.length - 1) ? "var(--foreign-bg)" : "var(--table-bg)";
+    const bgColor = slots[slotIndex]?.isFringe
+      ? "var(--foreign-bg)"
+      : "var(--table-bg)";
     cell.style.background = bgColor;
     cell.title = slotLabel;
     return;
@@ -1067,7 +1261,29 @@ let _lastPaintSyncPromise = null;
 function applyToCell(member, dayKey, slotIndex) {
   if (state.assignments[dayKey][member][slotIndex] === "LUNCH") return;
   state.assignments[dayKey][member][slotIndex] = paintMode === "erase" ? null : selectedBrandId;
-  _lastPaintSyncPromise = saveState(dayKey);
+  _lastPaintSyncPromise = saveState({
+    assignmentRows: assignmentRowsFor(dayKey, member)
+  });
+}
+
+async function finishLastPaintSync(showNotification) {
+  const paintSyncPromise = _lastPaintSyncPromise;
+  if (!paintSyncPromise) return;
+
+  // Clear only the gesture we just captured. A new gesture can now register its
+  // own promise without an older mouseup handler erasing or awaiting it.
+  _lastPaintSyncPromise = null;
+  if (typeof window.flushPendingScheduleChanges === "function") {
+    await window.flushPendingScheduleChanges();
+  }
+
+  const ok = await paintSyncPromise;
+  if (showNotification) {
+    showToast(
+      ok ? "Changes synced" : "⚠️ Guardado pendiente; se reintentará automáticamente",
+      ok ? "success" : "error"
+    );
+  }
 }
 
 function attachEvents() {
@@ -1084,6 +1300,7 @@ function attachEvents() {
   });
 
   themeToggleBtn.addEventListener("click", toggleTheme);
+  gridToggleBtn.addEventListener("click", toggleGridLines);
 
   memberTotals.addEventListener("click", (event) => {
     const toggle = event.target.closest(".member-total-toggle");
@@ -1129,13 +1346,15 @@ function attachEvents() {
     for (const day of weekdays) {
       if (day.foreign || isHoliday(day.key)) continue;
       for (const member of state.members) {
-        state.assignments[day.key][member] = slots.map((slot) => (slot.isLunch ? "LUNCH" : null));
+        state.assignments[day.key][member] = createEmptyAssignmentRow();
       }
       clearedDays.push(day.key);
     }
     renderTable();
     renderTotals();
-    const ok = await saveState(clearedDays);
+    const ok = await saveState({
+      assignmentRows: assignmentRowsFor(clearedDays, state.members)
+    });
     if (ok) showToast(`All assignments cleared for ${MONTHS[currentMonthIdx].label}`, "success");
   });
 
@@ -1150,14 +1369,14 @@ function attachEvents() {
     if (!state.memberDetails) state.memberDetails = {};
     state.memberDetails[clean] = { memberId: result.memberId };
     state.members.push(clean);
-    const addedDays = [];
     for (const day of allWeekdays) {
-      state.assignments[day.key][clean] = slots.map((slot) => (slot.isLunch ? "LUNCH" : null));
-      addedDays.push(day.key);
+      state.assignments[day.key][clean] = createEmptyAssignmentRow();
     }
     renderTable();
     renderTotals();
-    const ok = await saveState(addedDays);
+    const ok = await saveState({
+      memberChanges: [{ name: clean }]
+    });
     if (ok) showToast(`Team member "${clean}" added`, "success");
   });
 
@@ -1176,6 +1395,13 @@ function attachEvents() {
     }
     const memberName = state.members[idx];
     if (!confirm(`Remove "${memberName}" and all their assignments?`)) return;
+    if (typeof window.flushPendingScheduleChanges === "function") {
+      const pendingSaved = await window.flushPendingScheduleChanges();
+      if (!pendingSaved) {
+        showToast("No se puede eliminar el miembro mientras haya cambios pendientes", "error");
+        return;
+      }
+    }
     state.members.splice(idx, 1);
     for (const day of allWeekdays) {
       if (state.assignments[day.key][memberName]) {
@@ -1184,7 +1410,9 @@ function attachEvents() {
     }
     renderTable();
     renderTotals();
-    const ok = await saveState();
+    const ok = await saveState({
+      removedMemberNames: [memberName]
+    });
     if (ok) showToast(`Team member "${memberName}" removed`, "success");
   });
 
@@ -1197,7 +1425,9 @@ function attachEvents() {
     paintMode = "brand";
     renderPalette();
     renderTable();
-    const ok = await saveState();
+    const ok = await saveState({
+      brandIds: [id]
+    });
     if (ok) showToast(`Brand "${result.name}" added`, "success");
   });
 
@@ -1220,16 +1450,18 @@ function attachEvents() {
     }
     // Add brands to state
     let added = 0;
+    const addedBrandIds = [];
     for (const brand of imported) {
       if (!state.brands.find(b => b.name === brand.name)) {
         const id = `b${Date.now()}_${added}`;
         state.brands.push({ id, name: brand.name, color: brand.color, billingCode: brand.billingCode });
+        addedBrandIds.push(id);
         added++;
       }
     }
     importBrandsModal.hidden = true;
     renderPalette();
-    saveState();
+    saveState({ brandIds: addedBrandIds });
     showToast(`Imported ${added} brand(s)`, "success");
   });
 
@@ -1244,6 +1476,14 @@ function attachEvents() {
       return;
     }
     await exportScheduleToNewExcel();
+  });
+
+  exportAvailabilityBtn.addEventListener("click", async () => {
+    if (!window.XlsxPopulate) {
+      alert("Excel export library did not load. Please check your internet connection and reload.");
+      return;
+    }
+    await exportAvailabilityToExcel();
   });
 
   refreshDataBtn.addEventListener("click", async () => {
@@ -1277,6 +1517,7 @@ function attachEvents() {
     if (!cell || cell.classList.contains("lunch") || cell.classList.contains("foreign") || cell.classList.contains("holiday")) return;
     isMouseDown = true;
     const member = cell.dataset.member;
+    activePaintMember = member;
     const dayKey = cell.dataset.day;
     const slotIndex = Number(cell.dataset.slot);
     applyToCell(member, dayKey, slotIndex);
@@ -1290,6 +1531,7 @@ function attachEvents() {
     if (!isMouseDown) return;
     if (!cell || cell.classList.contains("lunch") || cell.classList.contains("foreign") || cell.classList.contains("holiday")) return;
     const member = cell.dataset.member;
+    if (member !== activePaintMember) return;
     const dayKey = cell.dataset.day;
     const slotIndex = Number(cell.dataset.slot);
     applyToCell(member, dayKey, slotIndex);
@@ -1299,25 +1541,20 @@ function attachEvents() {
   scheduleBody.addEventListener("mouseup", async () => {
     if (!isMouseDown) return;
     isMouseDown = false;
+    activePaintMember = null;
     renderTable();
     renderTotals();
-    if (_lastPaintSyncPromise) {
-      const ok = await _lastPaintSyncPromise;
-      _lastPaintSyncPromise = null;
-      showToast(ok ? "Changes synced" : "⚠️ No se pudo guardar, intenta de nuevo", ok ? "success" : "error");
-    }
+    await finishLastPaintSync(true);
   });
 
   document.addEventListener("mouseup", async () => {
     if (!isMouseDown) return;
     isMouseDown = false;
+    activePaintMember = null;
     renderTable();
     renderTotals();
-    if (_lastPaintSyncPromise) {
-      // Resolve silently — mouse was released outside the schedule (e.g. over brand palette)
-      await _lastPaintSyncPromise;
-      _lastPaintSyncPromise = null;
-    }
+    // Resolve silently — mouse was released outside the schedule (e.g. over brand palette)
+    await finishLastPaintSync(false);
   });
 
   scheduleBody.addEventListener("mouseleave", () => {
@@ -1353,7 +1590,9 @@ function attachEvents() {
     state.assignments[dayKey][member][slotIndex] = isLunchNow ? null : "LUNCH";
     renderTable();
     renderTotals();
-    const ok = await saveState(dayKey);
+    const ok = await saveState({
+      assignmentRows: assignmentRowsFor(dayKey, member)
+    });
     showToast(ok ? "Changes synced" : "⚠️ No se pudo guardar, intenta de nuevo", ok ? "success" : "error");
   });
 
@@ -1370,15 +1609,32 @@ function updateTableSizing() {
   const maxWeekDays = weeks.reduce((max, week) => Math.max(max, week.length), 0);
   if (!maxWeekDays) return;
 
-  const rootStyles = getComputedStyle(document.documentElement);
-  const memberWidth = parseInt(rootStyles.getPropertyValue("--member-col-width"), 10) || 128;
+  const root = document.documentElement;
+  const rootStyles = getComputedStyle(root);
+  const memberTrailingSpace =
+    parseInt(rootStyles.getPropertyValue("--member-label-trailing-space"), 10) || 7;
+  const widestMemberLabel = Array.from(
+    scheduleBody?.querySelectorAll(".member-cell span") || []
+  ).reduce((widest, label) => {
+    const range = document.createRange();
+    range.selectNodeContents(label);
+    const textWidth = range.getBoundingClientRect().width;
+    range.detach?.();
+    return Math.max(widest, textWidth);
+  }, 0);
+  // Border (4px) + left padding (5px) + the requested trailing space.
+  const memberWidth = Math.max(
+    110,
+    Math.min(210, Math.ceil(widestMemberLabel + 9 + memberTrailingSpace))
+  );
+  root.style.setProperty("--member-col-width", `${memberWidth}px`);
   const dayGapWidth = parseInt(rootStyles.getPropertyValue("--day-gap-width"), 10) || 8;
   const totalSlotColumns = maxWeekDays * slots.length;
   const availableWidth = tableWrap.clientWidth - memberWidth - (Math.max(0, maxWeekDays - 1) * dayGapWidth) - 8;
   const computedSlotWidth = Math.floor(availableWidth / totalSlotColumns);
   const slotWidth = Math.max(12, Math.min(22, computedSlotWidth));
 
-  document.documentElement.style.setProperty("--slot-width", `${slotWidth}px`);
+  root.style.setProperty("--slot-width", `${slotWidth}px`);
 }
 
 async function importFromJson(data) {
@@ -1419,33 +1675,39 @@ async function importFromJson(data) {
   }
 
   // Import assignments — only for existing members, only for existing brands
-  let daysImported = 0;
-  const changedDays = [];
+  const importedDays = new Set();
+  const changedAssignmentRows = [];
   for (const [dateKey, memberMap] of Object.entries(data.assignments)) {
     if (!state.assignments[dateKey]) continue; // date not in current year range, skip
     for (const [memberName, slotsArr] of Object.entries(memberMap)) {
       const appMember = resolveJsonMember(memberName);
       if (!appMember) continue; // skip unknown members
       state.assignments[dateKey][appMember] ||= slots.map(() => null);
+      let memberChanged = false;
       for (let i = 0; i < slotsArr.length && i < slots.length; i++) {
         const val = slotsArr[i];
         if (!val) continue;
         const brandId = resolveJsonBrand(val);
         if (!brandId) continue; // no matching brand in app — skip
-        state.assignments[dateKey][appMember][i] = brandId;
+        if (state.assignments[dateKey][appMember][i] !== brandId) {
+          state.assignments[dateKey][appMember][i] = brandId;
+          memberChanged = true;
+        }
+      }
+      if (memberChanged) {
+        changedAssignmentRows.push(...assignmentRowsFor(dateKey, appMember));
+        importedDays.add(dateKey);
       }
     }
-    if (!changedDays.includes(dateKey)) changedDays.push(dateKey);
-    daysImported++;
   }
 
   renderPalette();
   renderTable();
   renderTotals();
-  const ok = await saveState(changedDays);
+  const ok = await saveState({ assignmentRows: changedAssignmentRows });
   showToast(
     ok
-      ? `Imported ${daysImported} days of assignments`
+      ? `Imported ${importedDays.size} days of assignments`
       : "⚠️ Import done locally but sync failed — try saving again",
     ok ? "success" : "error"
   );
@@ -1588,6 +1850,152 @@ async function exportScheduleToNewExcel() {
   }
 }
 
+function getAvailabilityShift(slotIndex) {
+  const slot = slots[slotIndex];
+  if (!slot || slot.isLunch || slot.isFringe) return null;
+  if (slot.hour < 13) return "AM";
+  if (slot.hour >= 14) return "PM";
+  return null;
+}
+
+function getAvailableHoursForMemberDay(member, day) {
+  if (!day || day.foreign || isHoliday(day.key)) {
+    return { am: 0, pm: 0, total: 0 };
+  }
+
+  const memberSlots = state.assignments[day.key]?.[member];
+  if (!Array.isArray(memberSlots)) {
+    return { am: 0, pm: 0, total: 0 };
+  }
+
+  let am = 0;
+  let pm = 0;
+
+  for (let i = 0; i < memberSlots.length; i += 1) {
+    const value = memberSlots[i];
+    if (!(value === null || value === undefined || value === ".")) continue;
+
+    const shift = getAvailabilityShift(i);
+    if (shift === "AM") am += 0.5;
+    else if (shift === "PM") pm += 0.5;
+  }
+
+  return { am, pm, total: am + pm };
+}
+
+async function exportAvailabilityToExcel() {
+  try {
+    exportAvailabilityBtn.disabled = true;
+    exportAvailabilityBtn.textContent = "Exporting...";
+
+    const workbook = await window.XlsxPopulate.fromBlankAsync();
+    const sheet = workbook.sheet(0);
+    const monthLabel = MONTHS[currentMonthIdx].label;
+    const sheetName = `Summary ${monthLabel} By Person`;
+    sheet.name(sheetName.slice(0, 31));
+
+    const title = `${monthLabel.toUpperCase()} - Available Hours by Person`;
+    const dayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+    const headerRowDay = 4;
+    const headerRowShift = 5;
+    let rowNum = 6;
+    const monthTotals = Array.from({ length: 10 }, () => 0);
+    let monthGrandTotal = 0;
+
+    sheet.cell("A1").value(title).style("bold", true).style("fontSize", 14).style("fontColor", "FFFFFF").style("fill", "020028");
+    sheet.cell("A2").value("Available hours are based on unassigned white slots (#FFFFFF).").style("italic", true).style("fontColor", "6B7280");
+
+    sheet.cell(`A${headerRowDay}`).value("Week").style("bold", true).style("fill", "D3D3D3");
+    sheet.cell(`B${headerRowDay}`).value("Employee").style("bold", true).style("fill", "D3D3D3");
+    sheet.cell(`M${headerRowDay}`).value("Grand Total").style("bold", true).style("fill", "D3D3D3");
+
+    for (let dayIndex = 0; dayIndex < dayLabels.length; dayIndex += 1) {
+      const dayCol = String.fromCharCode(67 + (dayIndex * 2));
+      const pmCol = String.fromCharCode(68 + (dayIndex * 2));
+      sheet.cell(`${dayCol}${headerRowDay}`).value(dayLabels[dayIndex]).style("bold", true).style("fill", "D3D3D3");
+      sheet.cell(`${pmCol}${headerRowDay}`).value(dayLabels[dayIndex]).style("bold", true).style("fill", "D3D3D3");
+      sheet.cell(`${dayCol}${headerRowShift}`).value("AM").style("bold", true).style("fill", "ECECEC");
+      sheet.cell(`${pmCol}${headerRowShift}`).value("PM").style("bold", true).style("fill", "ECECEC");
+    }
+
+    sheet.cell(`A${headerRowShift}`).style("fill", "ECECEC");
+    sheet.cell(`B${headerRowShift}`).style("fill", "ECECEC");
+    sheet.cell(`M${headerRowShift}`).style("fill", "ECECEC");
+
+    sheet.column("A").width(14);
+    sheet.column("B").width(28);
+    for (const col of ["C", "D", "E", "F", "G", "H", "I", "J", "K", "L"]) {
+      sheet.column(col).width(8);
+    }
+    sheet.column("M").width(12);
+
+    for (let weekIndex = 0; weekIndex < weeks.length; weekIndex += 1) {
+      const weekDays = weeks[weekIndex];
+      const weekLabel = `Week ${weekIndex + 1}`;
+      const weekRows = [...state.members]
+        .sort(compareAvailabilityMemberOrder)
+        .map((member) => {
+          const dailyValues = weekDays.map((day) => getAvailableHoursForMemberDay(member, day));
+          const total = dailyValues.reduce((sum, dayValue) => sum + dayValue.total, 0);
+          return { member, dailyValues, total };
+        });
+
+      const weekTotals = Array.from({ length: 10 }, () => 0);
+      let weekGrandTotal = 0;
+
+      for (let memberIndex = 0; memberIndex < weekRows.length; memberIndex += 1) {
+        const weekRow = weekRows[memberIndex];
+        sheet.cell(`A${rowNum}`).value(memberIndex === 0 ? weekLabel : "");
+        sheet.cell(`B${rowNum}`).value(weekRow.member);
+
+        let colIndex = 0;
+        for (const dayValue of weekRow.dailyValues) {
+          const values = [dayValue.am, dayValue.pm];
+          for (const value of values) {
+            const col = String.fromCharCode(67 + colIndex);
+            sheet.cell(`${col}${rowNum}`).value(value).style("numberFormat", "0.0");
+            weekTotals[colIndex] += value;
+            monthTotals[colIndex] += value;
+            colIndex += 1;
+          }
+        }
+
+        sheet.cell(`M${rowNum}`).value(weekRow.total).style("numberFormat", "0.0");
+        weekGrandTotal += weekRow.total;
+        monthGrandTotal += weekRow.total;
+        rowNum += 1;
+      }
+
+      sheet.cell(`A${rowNum}`).value(`${weekLabel} Total`).style("bold", true).style("fill", "DCE6F1");
+      sheet.cell(`B${rowNum}`).style("fill", "DCE6F1");
+      for (let i = 0; i < weekTotals.length; i += 1) {
+        const col = String.fromCharCode(67 + i);
+        sheet.cell(`${col}${rowNum}`).value(weekTotals[i]).style("bold", true).style("fill", "DCE6F1").style("numberFormat", "0.0");
+      }
+      sheet.cell(`M${rowNum}`).value(weekGrandTotal).style("bold", true).style("fill", "DCE6F1").style("numberFormat", "0.0");
+      rowNum += 1;
+    }
+
+    sheet.cell(`A${rowNum}`).value("Month Total").style("bold", true).style("fill", "C6E0B4");
+    sheet.cell(`B${rowNum}`).style("fill", "C6E0B4");
+    for (let i = 0; i < monthTotals.length; i += 1) {
+      const col = String.fromCharCode(67 + i);
+      sheet.cell(`${col}${rowNum}`).value(monthTotals[i]).style("bold", true).style("fill", "C6E0B4").style("numberFormat", "0.0");
+    }
+    sheet.cell(`M${rowNum}`).value(monthGrandTotal).style("bold", true).style("fill", "C6E0B4").style("numberFormat", "0.0");
+
+    const out = await workbook.outputAsync();
+    const fileMonthLabel = monthLabel.replace(/\s+/g, "_");
+    downloadBlob(out, `DXI_Availability_${fileMonthLabel}_${todayStamp()}.xlsx`);
+    showToast("Availability exported successfully");
+  } catch (error) {
+    console.error(error);
+  } finally {
+    exportAvailabilityBtn.disabled = false;
+    exportAvailabilityBtn.textContent = "Export Availability";
+  }
+}
+
 function copyCellStyle(fromCell, toCell) {
   const styleKeys = [
     "fontFamily",
@@ -1688,7 +2096,7 @@ async function editBrand(brandId) {
   renderPalette();
   renderTable();
   renderTotals();
-  const ok = await saveState();
+  const ok = await saveState({ brandIds: [brandId] });
   if (ok) showToast(`Brand "${result.name}" updated`, "success");
 }
 
@@ -1696,22 +2104,34 @@ async function deleteBrand(brandId) {
   const brand = state.brands.find((b) => b.id === brandId);
   if (!brand) return;
   if (!confirm(`Delete brand "${brand.name}"? Assignments using this brand will be cleared.`)) return;
+  if (typeof window.flushPendingScheduleChanges === "function") {
+    const pendingSaved = await window.flushPendingScheduleChanges();
+    if (!pendingSaved) {
+      showToast("No se puede eliminar la marca mientras haya cambios pendientes", "error");
+      return;
+    }
+  }
 
   state.brands = state.brands.filter((b) => b.id !== brandId);
   // Remove from assignments
-  const affectedDays = [];
+  const affectedAssignmentRows = [];
   for (const dayKey of Object.keys(state.assignments)) {
     const day = state.assignments[dayKey];
-    let changed = false;
     for (const member of Object.keys(day)) {
-      const slots = day[member];
-      if (Array.isArray(slots)) {
-        for (let i = 0; i < slots.length; i++) {
-          if (slots[i] === brandId) { slots[i] = null; changed = true; }
+      const memberSlots = day[member];
+      let memberChanged = false;
+      if (Array.isArray(memberSlots)) {
+        for (let i = 0; i < memberSlots.length; i++) {
+          if (memberSlots[i] === brandId) {
+            memberSlots[i] = null;
+            memberChanged = true;
+          }
         }
       }
+      if (memberChanged) {
+        affectedAssignmentRows.push(...assignmentRowsFor(dayKey, member));
+      }
     }
-    if (changed) affectedDays.push(dayKey);
   }
   if (selectedBrandId === brandId) {
     selectedBrandId = state.brands.length ? state.brands[0].id : null;
@@ -1719,7 +2139,10 @@ async function deleteBrand(brandId) {
   renderPalette();
   renderTable();
   renderTotals();
-  const ok = await saveState(affectedDays);
+  const ok = await saveState({
+    assignmentRows: affectedAssignmentRows,
+    removedBrandIds: [brandId]
+  });
   if (ok) showToast(`Brand "${brand.name}" deleted`, "success");
 }
 
@@ -1809,6 +2232,13 @@ async function editMember(memberName) {
   const currentId = state.memberDetails?.[memberName]?.memberId || "";
   const result = await openMemberModal(memberName, currentId);
   if (!result) return;
+  if (typeof window.flushPendingScheduleChanges === "function") {
+    const pendingSaved = await window.flushPendingScheduleChanges();
+    if (!pendingSaved) {
+      showToast("No se puede editar el miembro mientras haya cambios pendientes", "error");
+      return;
+    }
+  }
   const newName = result.name;
   if (!state.memberDetails) state.memberDetails = {};
   if (newName !== memberName) {
@@ -1827,7 +2257,9 @@ async function editMember(memberName) {
     }
   }
   state.memberDetails[newName] = { memberId: result.memberId };
-  const ok = await saveState();
+  const ok = await saveState({
+    memberChanges: [{ name: newName, previousName: memberName }]
+  });
   renderTable();
   if (ok) showToast(`Member "${newName}" updated`, "success");
 }
@@ -1844,6 +2276,30 @@ function applyLegendCollapse(collapsed) {
   toggleLegendBtn.setAttribute("aria-expanded", collapsed ? "false" : "true");
   toggleLegendBtn.setAttribute("aria-label", collapsed ? "Expand Brand Palette" : "Collapse Brand Palette");
   toggleLegendBtn.title = collapsed ? "Expand Brand Palette" : "Collapse Brand Palette";
+}
+
+function buildDotCursorValue(color) {
+  const normalized = normalizeHex(color);
+  if (!normalized) return "crosshair";
+
+  const svg = [
+    "<svg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 12 12'>",
+    `<circle cx='6' cy='6' r='3' fill='${normalized}' stroke='#181818' stroke-width='0.5'/>`,
+    "</svg>"
+  ].join("");
+
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 6 6, crosshair`;
+}
+
+function updateSlotCursor() {
+  const root = document.documentElement;
+  const eraserColor = getComputedStyle(root).getPropertyValue("--eraser-color").trim() || "#E52D4D";
+  const activeBrand = state?.brands?.find((brand) => brand.id === selectedBrandId) || null;
+  const cursorColor = paintMode === "erase"
+    ? eraserColor
+    : (activeBrand?.color || getComputedStyle(root).getPropertyValue("--accent").trim() || "#0E75FF");
+
+  root.style.setProperty("--slot-cell-cursor", buildDotCursorValue(cursorColor));
 }
 
 function updateEraserVisual() {
@@ -1863,6 +2319,8 @@ function updateEraserVisual() {
     timeOffBtn.disabled = !timeOffBrand;
     timeOffBtn.title = timeOffBrand ? "Time Off" : "Time Off brand not found";
   }
+
+  updateSlotCursor();
 }
 
 function toLabel(hour, minute) {
@@ -2051,7 +2509,9 @@ function openRecurringModal() {
     modal.hidden = true;
     renderTable();
     renderTotals();
-    const ok = await saveState(targetDays);
+    const ok = await saveState({
+      assignmentRows: assignmentRowsFor(targetDays, member)
+    });
     showToast(
       ok
         ? `${member} scheduled for ${hoursPerDay.toFixed(1)}h/day across ${targetDays.length} day(s)`

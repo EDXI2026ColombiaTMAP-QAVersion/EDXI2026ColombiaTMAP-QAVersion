@@ -3,6 +3,9 @@
 
 const DEFAULT_MIN_DATE = "2026-01-01";
 const DEFAULT_MAX_DATE = "2026-12-31";
+const SYNC_OUTBOX_STORAGE_KEY = "dxi-supabase-sync-outbox-v1";
+const LEGACY_SLOT_COUNT = 20;
+const CURRENT_SLOT_COUNT = 22;
 
 let SUPABASE_URL = null;
 let SUPABASE_PUBLISHABLE_KEY = null;
@@ -10,6 +13,153 @@ let SUPABASE_PUBLISHABLE_KEY = null;
 let _syncTimer = null;
 let _pendingResolvers = [];
 let _flushing = false;
+let _pendingState = null;
+let _retryDelayMs = 2000;
+let _pendingChanges = createEmptyChangeSet();
+let _activeChanges = null;
+let _activeFlushPromise = null;
+let _cachedMembers = [];
+let _cachedBrands = [];
+let _metadataCacheReady = false;
+
+function createEmptyChangeSet() {
+  return {
+    assignmentRows: new Map(),
+    memberChanges: new Map(),
+    brandIds: new Set(),
+    removedMemberNames: new Set(),
+    removedBrandIds: new Set()
+  };
+}
+
+function assignmentRowKey(workDate, member) {
+  return JSON.stringify([workDate, member]);
+}
+
+function normalizeChangeSet(changes = {}) {
+  const normalized = createEmptyChangeSet();
+  if (!changes || typeof changes !== "object") return normalized;
+
+  for (const row of changes.assignmentRows || []) {
+    const workDate = typeof row?.workDate === "string"
+      ? row.workDate
+      : (typeof row?.dayKey === "string" ? row.dayKey : "");
+    const member = typeof row?.member === "string" ? row.member : "";
+    if (!workDate || !member) continue;
+    const slots = Array.isArray(row?.slots) ? normalizeSlots([...row.slots]) : null;
+    const memberId = typeof row?.memberId === "string" && row.memberId ? row.memberId : null;
+    normalized.assignmentRows.set(assignmentRowKey(workDate, member), {
+      workDate,
+      member,
+      ...(slots ? { slots } : {}),
+      ...(memberId ? { memberId } : {})
+    });
+  }
+
+  for (const change of changes.memberChanges || []) {
+    const name = typeof change === "string" ? change : change?.name;
+    const previousName = typeof change === "object" && typeof change?.previousName === "string"
+      ? change.previousName
+      : null;
+    if (typeof name !== "string" || !name.trim()) continue;
+    normalized.memberChanges.set(normalizeKey(name), { name, previousName });
+  }
+
+  for (const brandId of changes.brandIds || []) {
+    if (typeof brandId === "string" && brandId) normalized.brandIds.add(brandId);
+  }
+
+  for (const memberName of changes.removedMemberNames || []) {
+    if (typeof memberName === "string" && memberName) normalized.removedMemberNames.add(memberName);
+  }
+
+  for (const brandId of changes.removedBrandIds || []) {
+    if (typeof brandId === "string" && brandId) normalized.removedBrandIds.add(brandId);
+  }
+
+  return normalized;
+}
+
+function mergeChangeSets(target, source) {
+  for (const [key, row] of source.assignmentRows) target.assignmentRows.set(key, row);
+  for (const [key, change] of source.memberChanges) target.memberChanges.set(key, change);
+  for (const brandId of source.brandIds) target.brandIds.add(brandId);
+  for (const memberName of source.removedMemberNames) target.removedMemberNames.add(memberName);
+  for (const brandId of source.removedBrandIds) target.removedBrandIds.add(brandId);
+  return target;
+}
+
+function hasChanges(changes) {
+  return changes.assignmentRows.size > 0
+    || changes.memberChanges.size > 0
+    || changes.brandIds.size > 0
+    || changes.removedMemberNames.size > 0
+    || changes.removedBrandIds.size > 0;
+}
+
+function serializeChangeSet(changes) {
+  return {
+    assignmentRows: [...changes.assignmentRows.values()],
+    memberChanges: [...changes.memberChanges.values()],
+    brandIds: [...changes.brandIds],
+    removedMemberNames: [...changes.removedMemberNames],
+    removedBrandIds: [...changes.removedBrandIds]
+  };
+}
+
+function readPersistedChangeSet() {
+  try {
+    const raw = window.localStorage?.getItem(SYNC_OUTBOX_STORAGE_KEY);
+    if (!raw) return createEmptyChangeSet();
+    return normalizeChangeSet(JSON.parse(raw));
+  } catch (error) {
+    console.warn("No se pudo leer la cola local de sincronizacion:", error.message);
+    return createEmptyChangeSet();
+  }
+}
+
+function persistOutbox() {
+  if (typeof window === "undefined") return;
+
+  const combined = createEmptyChangeSet();
+  if (_activeChanges) mergeChangeSets(combined, _activeChanges);
+  // Pending changes are newer than the in-flight snapshot and must win when
+  // both refer to the same person and date.
+  mergeChangeSets(combined, _pendingChanges);
+
+  try {
+    const storage = window.localStorage;
+    if (!storage) return;
+
+    // Persist schedule rows only: they are self-contained snapshots. Metadata
+    // changes depend on additional local form state and are retried in memory.
+    if (combined.assignmentRows.size > 0) {
+      storage.setItem(
+        SYNC_OUTBOX_STORAGE_KEY,
+        JSON.stringify({ assignmentRows: [...combined.assignmentRows.values()] })
+      );
+    } else {
+      storage.removeItem(SYNC_OUTBOX_STORAGE_KEY);
+    }
+  } catch (error) {
+    console.warn("No se pudo guardar la cola local de sincronizacion:", error.message);
+  }
+}
+
+function overlayPendingAssignments(remoteState) {
+  const target = normalizeRemoteState(remoteState);
+  const combined = createEmptyChangeSet();
+  if (_activeChanges) mergeChangeSets(combined, _activeChanges);
+  mergeChangeSets(combined, _pendingChanges);
+
+  for (const row of combined.assignmentRows.values()) {
+    if (!Array.isArray(row.slots)) continue;
+    target.assignments[row.workDate] ||= {};
+    target.assignments[row.workDate][row.member] = normalizeSlots([...row.slots]);
+  }
+
+  return target;
+}
 
 function createEmptyPreloadedData() {
   return {
@@ -110,7 +260,7 @@ function decodeAssignmentPattern(pattern, brandsByLegacyIndex) {
     index += 1;
   }
 
-  return slots;
+  return normalizeSlots(slots);
 }
 
 function encodeAssignmentPattern(slots, brandLegacyById) {
@@ -130,10 +280,18 @@ function encodeAssignmentPattern(slots, brandLegacyById) {
 function normalizeSlots(slots) {
   if (!Array.isArray(slots)) return [];
 
-  return slots.map((value) => {
+  const normalized = slots.map((value) => {
     if (value === undefined || value === ".") return null;
     return value;
   });
+
+  if (normalized.length === LEGACY_SLOT_COUNT) {
+    return [null, ...normalized, null];
+  }
+
+  return normalized.length > CURRENT_SLOT_COUNT
+    ? normalized.slice(0, CURRENT_SLOT_COUNT)
+    : normalized;
 }
 
 function buildFullState(state) {
@@ -209,6 +367,10 @@ async function loadDirectState() {
     )
   ]);
 
+  _cachedMembers = Array.isArray(members) ? members.map((member) => ({ ...member })) : [];
+  _cachedBrands = Array.isArray(brands) ? brands.map((brand) => ({ ...brand })) : [];
+  _metadataCacheReady = true;
+
   const brandsByLegacyIndex = new Map();
   const membersById = new Map();
 
@@ -257,7 +419,7 @@ async function loadDirectState() {
   };
 }
 
-function buildMemberRecords(state, existingMembers) {
+function buildMemberRecords(state, existingMembers, previousNamesByCurrent = new Map()) {
   const byEmployeeCode = new Map();
   const byName = new Map();
 
@@ -271,7 +433,10 @@ function buildMemberRecords(state, existingMembers) {
     if (typeof memberName !== "string" || !memberName.trim()) continue;
 
     const employeeCode = String(state.memberDetails?.[memberName]?.memberId || "").trim() || null;
-    const existing = (employeeCode && byEmployeeCode.get(employeeCode)) || byName.get(normalizeKey(memberName));
+    const previousName = previousNamesByCurrent.get(normalizeKey(memberName));
+    const existing = (employeeCode && byEmployeeCode.get(employeeCode))
+      || byName.get(normalizeKey(memberName))
+      || (previousName ? byName.get(normalizeKey(previousName)) : null);
 
     records.push({
       ...(existing?.id ? { id: existing.id } : {}),
@@ -390,16 +555,62 @@ function buildBrandRecords(state, existingBrands) {
     });
 }
 
-async function saveDirectState(state) {
+async function saveDirectState(state, requestedChanges = {}) {
   const safeState = buildFullState(state);
+  const changes = normalizeChangeSet(requestedChanges);
 
-  const [existingMembers, existingBrands] = await Promise.all([
-    supabaseRequest("members?select=id,employee_code,name,active"),
-    supabaseRequest("brands?select=id,legacy_index,name,color,billing_code,active")
-  ]);
+  // Capture the requested rows before the first network wait. Edits made while this
+  // batch is in flight stay in the pending queue and are sent by the next batch.
+  const assignmentSnapshots = [];
+  for (const { workDate, member, slots: queuedSlots, memberId } of changes.assignmentRows.values()) {
+    const sourceSlots = Array.isArray(queuedSlots)
+      ? queuedSlots
+      : safeState.assignments?.[workDate]?.[member];
+    if (!Array.isArray(sourceSlots)) {
+      throw new Error(`No se encontraron horas para "${member}" el ${workDate}.`);
+    }
+    assignmentSnapshots.push({
+      workDate,
+      member,
+      memberId,
+      slots: normalizeSlots([...sourceSlots])
+    });
+  }
 
-  const memberRecords = buildMemberRecords(safeState, existingMembers || []);
-  const brandRecords = buildBrandRecords(safeState, existingBrands || []);
+  const metadataChanged = changes.memberChanges.size > 0
+    || changes.brandIds.size > 0
+    || changes.removedMemberNames.size > 0
+    || changes.removedBrandIds.size > 0;
+
+  let existingMembers;
+  let existingBrands;
+  if (_metadataCacheReady && !metadataChanged) {
+    existingMembers = _cachedMembers.map((member) => ({ ...member }));
+    existingBrands = _cachedBrands.map((brand) => ({ ...brand }));
+  } else {
+    [existingMembers, existingBrands] = await Promise.all([
+      supabaseRequest("members?select=id,employee_code,name,active"),
+      supabaseRequest("brands?select=id,legacy_index,name,color,billing_code,active")
+    ]);
+    _cachedMembers = (existingMembers || []).map((member) => ({ ...member }));
+    _cachedBrands = (existingBrands || []).map((brand) => ({ ...brand }));
+    _metadataCacheReady = true;
+  }
+
+  const previousNamesByCurrent = new Map(
+    [...changes.memberChanges.values()]
+      .filter((change) => change.previousName)
+      .map((change) => [normalizeKey(change.name), change.previousName])
+  );
+  const changedMemberNames = new Set(changes.memberChanges.keys());
+  const memberRecords = buildMemberRecords(
+    safeState,
+    existingMembers || [],
+    previousNamesByCurrent
+  ).filter((member) => changedMemberNames.has(normalizeKey(member.name)));
+
+  const brandRecords = buildBrandRecords(safeState, existingBrands || [])
+    .filter((brand) => changes.brandIds.has(brand.id));
 
   const savedMembers = memberRecords.length
     ? await saveMembers(memberRecords)
@@ -415,62 +626,89 @@ async function saveDirectState(state) {
       })
     : [];
 
-  const activeMemberIds = new Set((savedMembers || []).map((member) => member.id));
-  const activeBrandIds = new Set((savedBrands || []).map((brand) => brand.id));
+  if (savedMembers.length) {
+    const savedById = new Map(savedMembers.map((member) => [member.id, member]));
+    _cachedMembers = _cachedMembers
+      .filter((member) => !savedById.has(member.id))
+      .concat(savedMembers.map((member) => ({ ...member })));
+  }
 
-  const staleMemberIds = (existingMembers || [])
-    .map((member) => member.id)
-    .filter((id) => !activeMemberIds.has(id));
-  const staleBrandIds = (existingBrands || [])
-    .map((brand) => brand.id)
-    .filter((id) => !activeBrandIds.has(id));
+  if (savedBrands.length) {
+    const savedById = new Map(savedBrands.map((brand) => [brand.id, brand]));
+    _cachedBrands = _cachedBrands
+      .filter((brand) => !savedById.has(brand.id))
+      .concat(savedBrands.map((brand) => ({ ...brand })));
+  }
 
-  if (staleMemberIds.length) {
-    await supabaseRequest(`members?id=${buildInFilter(staleMemberIds)}`, {
+  const removedMemberKeys = new Set(
+    [...changes.removedMemberNames].map((name) => normalizeKey(name))
+  );
+  const removedMemberIds = (existingMembers || [])
+    .filter((member) => removedMemberKeys.has(normalizeKey(member.name)))
+    .map((member) => member.id);
+
+  if (removedMemberIds.length) {
+    await supabaseRequest(`members?id=${buildInFilter(removedMemberIds)}`, {
       method: "PATCH",
       body: JSON.stringify({ active: false })
     });
-  }
-
-  if (staleBrandIds.length) {
-    await supabaseRequest(`brands?id=${buildInFilter(staleBrandIds)}`, {
-      method: "PATCH",
-      body: JSON.stringify({ active: false })
-    });
-  }
-
-  const memberIdByName = new Map((savedMembers || []).map((member) => [member.name, member.id]));
-  const brandLegacyById = new Map((savedBrands || []).map((brand) => [brand.id, brand.legacy_index]));
-  const assignmentDates = Object.keys(safeState.assignments || {}).sort();
-  const minDate = assignmentDates[0] || DEFAULT_MIN_DATE;
-  const maxDate = assignmentDates[assignmentDates.length - 1] || DEFAULT_MAX_DATE;
-
-  await supabaseRequest(
-    `daily_assignments?work_date=gte.${minDate}&work_date=lte.${maxDate}`,
-    {
+    await supabaseRequest(`daily_assignments?member_id=${buildInFilter(removedMemberIds)}`, {
       method: "DELETE",
       headers: {
         Prefer: "return=minimal"
       }
-    }
+    });
+    _cachedMembers = _cachedMembers.map((member) => (
+      removedMemberIds.includes(member.id) ? { ...member, active: false } : member
+    ));
+  }
+
+  const removedBrandIds = (existingBrands || [])
+    .map((brand) => brand.id)
+    .filter((id) => changes.removedBrandIds.has(id));
+
+  if (removedBrandIds.length) {
+    await supabaseRequest(`brands?id=${buildInFilter(removedBrandIds)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ active: false })
+    });
+    _cachedBrands = _cachedBrands.map((brand) => (
+      removedBrandIds.includes(brand.id) ? { ...brand, active: false } : brand
+    ));
+  }
+
+  const availableMembers = [...(existingMembers || []), ...(savedMembers || [])];
+  const availableBrands = [...(existingBrands || []), ...(savedBrands || [])];
+  const memberIdByName = new Map(
+    availableMembers.map((member) => [normalizeKey(member.name), member.id])
+  );
+  const brandLegacyById = new Map(
+    availableBrands.map((brand) => [brand.id, brand.legacy_index])
   );
 
   const assignmentRows = [];
-  for (const [workDate, dayAssignments] of Object.entries(safeState.assignments || {})) {
-    if (!dayAssignments || typeof dayAssignments !== "object") continue;
-
-    for (const memberName of safeState.members) {
-      const memberId = memberIdByName.get(memberName);
-      const slots = normalizeSlots(dayAssignments[memberName]);
-      if (!memberId || !slots.some(isRealAssignmentValue)) continue;
-
-      assignmentRows.push({
-        work_date: workDate,
-        member_id: memberId,
-        assignment_pattern: encodeAssignmentPattern(slots, brandLegacyById),
-        slots
-      });
+  for (const snapshot of assignmentSnapshots) {
+    const { workDate, member, slots } = snapshot;
+    const resolvedMemberId = snapshot.memberId || memberIdByName.get(normalizeKey(member));
+    if (!resolvedMemberId) {
+      throw new Error(`No se encontro el miembro "${member}" en Supabase.`);
     }
+
+    const missingBrandId = slots.find(
+      (value) => isRealAssignmentValue(value) && !brandLegacyById.has(value)
+    );
+    if (missingBrandId) {
+      throw new Error(`No se encontro la marca "${missingBrandId}" en Supabase.`);
+    }
+
+    // Empty rows are intentionally upserted too. Otherwise erasing the final
+    // assignment would leave the previous value stored in Supabase.
+    assignmentRows.push({
+      work_date: workDate,
+      member_id: resolvedMemberId,
+      assignment_pattern: encodeAssignmentPattern(slots, brandLegacyById),
+      slots
+    });
   }
 
   for (const batch of chunkArray(assignmentRows, 250)) {
@@ -489,7 +727,9 @@ async function saveDirectState(state) {
   return {
     members: (savedMembers || []).length,
     brands: (savedBrands || []).length,
-    assignments: assignmentRows.length
+    assignments: assignmentRows.length,
+    removedMembers: removedMemberIds.length,
+    removedBrands: removedBrandIds.length
   };
 }
 
@@ -498,57 +738,116 @@ async function loadDataFromSheet() {
 
   if (!config) {
     console.warn("Supabase no configurado; la app usara los datos embebidos.");
-    window.PRELOADED_DATA = normalizeRemoteState(window.PRELOADED_DATA);
+    window.PRELOADED_DATA = overlayPendingAssignments(window.PRELOADED_DATA);
     return false;
   }
 
   try {
     const data = await loadDirectState();
-    window.PRELOADED_DATA = normalizeRemoteState(data);
+    window.PRELOADED_DATA = overlayPendingAssignments(data);
     console.log(
       `Supabase cargado: ${data.members.length} miembros, ${data.brands.length} marcas, ${Object.keys(data.assignments).length} dias`
     );
     return true;
   } catch (error) {
     console.error("Error cargando Supabase:", error.message);
-    window.PRELOADED_DATA = normalizeRemoteState(window.PRELOADED_DATA);
+    window.PRELOADED_DATA = overlayPendingAssignments(window.PRELOADED_DATA);
     return false;
   }
 }
 
-function syncDataToSheet(state) {
-  const promise = new Promise((resolve) => _pendingResolvers.push(resolve));
-
+function schedulePendingFlush(delayMs) {
   clearTimeout(_syncTimer);
   _syncTimer = setTimeout(() => {
-    _flushPendingState(state);
-  }, 2000);
+    _syncTimer = null;
+    _flushPendingState();
+  }, delayMs);
+}
 
+function syncDataToSheet(state, requestedChanges = {}) {
+  const changes = normalizeChangeSet(requestedChanges);
+  if (!hasChanges(changes)) return Promise.resolve(true);
+
+  const cachedMemberIdByName = new Map(
+    _cachedMembers.map((member) => [normalizeKey(member.name), member.id])
+  );
+  for (const [key, row] of changes.assignmentRows) {
+    const sourceSlots = state?.assignments?.[row.workDate]?.[row.member];
+    const slots = Array.isArray(row.slots)
+      ? normalizeSlots([...row.slots])
+      : (Array.isArray(sourceSlots) ? normalizeSlots([...sourceSlots]) : null);
+    const memberId = row.memberId || cachedMemberIdByName.get(normalizeKey(row.member)) || null;
+    changes.assignmentRows.set(key, {
+      ...row,
+      ...(slots ? { slots } : {}),
+      ...(memberId ? { memberId } : {})
+    });
+  }
+
+  _pendingState = state;
+  mergeChangeSets(_pendingChanges, changes);
+  persistOutbox();
+
+  const promise = new Promise((resolve) => _pendingResolvers.push(resolve));
+  schedulePendingFlush(2000);
   return promise;
 }
 
-async function _flushPendingState(state) {
+function _flushPendingState() {
   if (_flushing) {
-    clearTimeout(_syncTimer);
-    _syncTimer = setTimeout(() => {
-      _flushPendingState(state);
-    }, 800);
-    return;
+    if (hasChanges(_pendingChanges)) schedulePendingFlush(250);
+    return _activeFlushPromise || Promise.resolve(false);
   }
 
+  if (!hasChanges(_pendingChanges)) return Promise.resolve(true);
+  if (!_pendingState) return Promise.resolve(false);
+
+  const stateToSave = _pendingState;
+  const changesToSave = _pendingChanges;
+  const resolvers = _pendingResolvers.splice(0);
+  _pendingChanges = createEmptyChangeSet();
+  _activeChanges = changesToSave;
   _flushing = true;
-  try {
-    const resolvers = _pendingResolvers.splice(0);
-    const result = await _sendFullState(state);
-    resolvers.forEach((resolve) => resolve(result.ok));
-  } finally {
-    _flushing = false;
-  }
+  persistOutbox();
+
+  _activeFlushPromise = (async () => {
+    let succeeded = false;
+    try {
+      const result = await _sendChanges(stateToSave, serializeChangeSet(changesToSave));
+      succeeded = result.ok;
+      if (!result.ok) {
+        // Requeue the failed snapshot first, then overlay changes made while it
+        // was in flight so the newest value for a row always wins.
+        const requeued = createEmptyChangeSet();
+        mergeChangeSets(requeued, changesToSave);
+        mergeChangeSets(requeued, _pendingChanges);
+        _pendingChanges = requeued;
+      }
+      resolvers.forEach((resolve) => resolve(result.ok));
+      return result.ok;
+    } finally {
+      _activeChanges = null;
+      _flushing = false;
+      _activeFlushPromise = null;
+      if (succeeded) {
+        _retryDelayMs = 2000;
+      } else {
+        _retryDelayMs = Math.min(_retryDelayMs * 2, 30000);
+      }
+
+      persistOutbox();
+      if (hasChanges(_pendingChanges)) {
+        schedulePendingFlush(succeeded ? 100 : _retryDelayMs);
+      }
+    }
+  })();
+
+  return _activeFlushPromise;
 }
 
-async function _sendFullState(state) {
+async function _sendChanges(state, requestedChanges) {
   try {
-    const summary = await saveDirectState(state);
+    const summary = await saveDirectState(state, requestedChanges);
     console.log(
       `Supabase sincronizado correctamente: ${summary.members} miembros, ${summary.brands} marcas, ${summary.assignments} asignaciones`
     );
@@ -563,11 +862,20 @@ async function _sendFullState(state) {
 }
 
 async function fullSyncToSheet() {
-  const currentState = typeof state !== "undefined" ? state : null;
-  if (!currentState) return false;
+  return flushPendingChangesNow();
+}
 
-  const result = await _sendFullState(currentState);
-  return result.ok;
+async function flushPendingChangesNow() {
+  clearTimeout(_syncTimer);
+  _syncTimer = null;
+
+  if (_flushing) {
+    const activeSucceeded = await (_activeFlushPromise || Promise.resolve(false));
+    if (!activeSucceeded) return false;
+    return flushPendingChangesNow();
+  }
+
+  return _flushPendingState();
 }
 
 function configureSupabaseSync(options = {}) {
@@ -594,17 +902,35 @@ function configureSheetSync(arg1, arg2) {
   });
 }
 
+mergeChangeSets(_pendingChanges, readPersistedChangeSet());
+
+function resumePendingChanges(stateToResume) {
+  if (!stateToResume || !hasChanges(_pendingChanges)) return false;
+  _pendingState = stateToResume;
+  schedulePendingFlush(100);
+  return true;
+}
+
 async function initializeApp() {
   await loadDataFromSheet();
 
   if (typeof init === "function") {
     init();
   }
+
+  const currentState = typeof state !== "undefined" ? state : null;
+  resumePendingChanges(currentState);
 }
 
 if (typeof window !== "undefined") {
   window.reloadDataFromSource = loadDataFromSheet;
+  window.flushPendingScheduleChanges = flushPendingChangesNow;
+  window.addEventListener("pagehide", flushPendingChangesNow);
 }
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") flushPendingChangesNow();
+});
 
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", initializeApp);

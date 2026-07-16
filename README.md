@@ -11,6 +11,35 @@ This version is prepared for static hosting on GitHub Pages and connects directl
 
 The app no longer depends on Google Sheets to load or save schedule data.
 
+The schedule grid covers `07:00` through `18:00` in 30-minute blocks. Rows
+stored with the previous `07:30` through `17:30` range are expanded
+automatically without shifting their existing assignments.
+
+## Concurrent editing
+
+Schedule changes are saved incrementally by `(work_date, member_id)`. The app no
+longer deletes and recreates the full year when somebody edits a cell. This lets
+different team members update their own rows at the same time without overwriting
+one another.
+
+Pending schedule rows are also kept in a small browser outbox. A transient
+network failure or page reload does not discard them; the app restores and
+retries those rows on the next load.
+
+Supabase must have a primary key or unique constraint on
+`daily_assignments (work_date, member_id)` because incremental writes use that
+pair as the `upsert` conflict target.
+
+Two browsers editing the same member on the same date still use last-write-wins,
+because all of that person's time slots for the date are stored in one database
+row.
+
+Run the concurrency regression tests with:
+
+```powershell
+npm.cmd test
+```
+
 ## Supabase project used
 
 - Project URL: `https://dbzyirwwfvxpdfsukhdq.supabase.co`
