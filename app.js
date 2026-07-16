@@ -25,6 +25,7 @@ const safeStorage = {
 
 const STORAGE_KEY = "dxi-timing-map-2026-v13";
 const THEME_STORAGE_KEY = "dxi-theme";
+const GRID_STORAGE_KEY = "dxi-grid-lines";
 const MEMBER_TOTALS_EXPANDED_KEY = "dxi-member-totals-expanded";
 const SLOT_START_HOUR = 7;
 const SLOT_START_MINUTE = 30;
@@ -139,6 +140,7 @@ let layoutMain;
 let totalsPanel;
 let toggleTotalsBtn;
 let themeToggleBtn;
+let gridToggleBtn;
 let tableWrap;
 let scheduleTable;
 let scheduleHead;
@@ -154,6 +156,7 @@ let addMemberBtn;
 let removeMemberBtn;
 let addBrandBtn;
 let exportExcelBtn;
+let exportAvailabilityBtn;
 let refreshDataBtn;
 let templateFileInput;
 let recurringBtn;
@@ -172,9 +175,37 @@ let _brandModalResolve = null;
 // Import brands modal refs
 let importBrandsModal, importBrandsInput, importBrandsOk, importBrandsCancel, importBrandsBtn;
 const DISABLED_FEATURES = {
+  clearMonth: true,
   importBrands: true,
   importExcel: true
 };
+const HIDDEN_FEATURES = {
+  addMember: true,
+  removeMember: true
+};
+const AVAILABILITY_MEMBER_ORDER = [
+  "Daniela Mahecha",
+  "Daniela Oliva",
+  "Laura Álvarez",
+  "Natalia Bolaño",
+  "Hernan Torres",
+  "Ana Piraquive",
+  "David Bautista",
+  "Nicolas Lopez",
+  "Natalia Sanchez",
+  "David Guzman",
+  "Gabriela Pelayo",
+  "Valentina Zarate",
+  "Felipe Mendez",
+  "Camila Martinez",
+  "William Franco",
+  "Kimberly Velasquez",
+  "Laura Gordillo",
+  "Camilo Hernandez"
+];
+const availabilityOrderIndex = new Map(
+  AVAILABILITY_MEMBER_ORDER.map((member, index) => [normalizeMemberName(member), index])
+);
 
 // Member modal refs
 let memberModal, memberModalName, memberModalId, memberModalSave, memberModalCancel;
@@ -199,6 +230,7 @@ function init() {
   totalsPanel = document.getElementById("totalsPanel");
   toggleTotalsBtn = document.getElementById("toggleTotalsBtn");
   themeToggleBtn = document.getElementById("themeToggleBtn");
+  gridToggleBtn = document.getElementById("gridToggleBtn");
   tableWrap = document.querySelector(".table-wrap");
   scheduleTable = document.getElementById("scheduleTable");
   scheduleHead = document.getElementById("scheduleHead");
@@ -214,6 +246,7 @@ function init() {
   removeMemberBtn = document.getElementById("removeMemberBtn");
   addBrandBtn = document.getElementById("addBrandBtn");
   exportExcelBtn = document.getElementById("exportExcelBtn");
+  exportAvailabilityBtn = document.getElementById("exportAvailabilityBtn");
   refreshDataBtn = document.getElementById("refreshDataBtn");
   importJsonBtn = document.getElementById("importJsonBtn");
   importJsonFileInput = document.getElementById("importJsonFileInput");
@@ -260,6 +293,7 @@ function init() {
   applyFeatureLocks();
 
   applyTheme(safeStorage.getItem(THEME_STORAGE_KEY) === "dark" ? "dark" : "light", false);
+  applyGridLines(safeStorage.getItem(GRID_STORAGE_KEY) === "on", false);
   renderMonthTabs();
   updateScheduleTitle();
   applyTotalsCollapse(safeStorage.getItem("dxi-totals-collapsed") === "1");
@@ -290,13 +324,52 @@ function lockButton(button, message) {
   button.title = message;
 }
 
+function hideButton(button) {
+  if (!button) return;
+  button.hidden = true;
+  button.disabled = true;
+  button.setAttribute("aria-hidden", "true");
+}
+
+function normalizeMemberName(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function compareAvailabilityMemberOrder(a, b) {
+  const aIndex = availabilityOrderIndex.get(normalizeMemberName(a));
+  const bIndex = availabilityOrderIndex.get(normalizeMemberName(b));
+  const aKnown = aIndex !== undefined;
+  const bKnown = bIndex !== undefined;
+
+  if (aKnown && bKnown) return aIndex - bIndex;
+  if (aKnown) return -1;
+  if (bKnown) return 1;
+  return a.localeCompare(b);
+}
+
 function applyFeatureLocks() {
+  if (DISABLED_FEATURES.clearMonth) {
+    lockButton(clearMonthBtn, "Clear Full Month is currently disabled");
+  }
+
   if (DISABLED_FEATURES.importBrands) {
     lockButton(importBrandsBtn, "Import Brands is currently disabled");
   }
 
   if (DISABLED_FEATURES.importExcel) {
     lockButton(importJsonBtn, "Import Excel is currently disabled");
+  }
+
+  if (HIDDEN_FEATURES.addMember) {
+    hideButton(addMemberBtn);
+  }
+
+  if (HIDDEN_FEATURES.removeMember) {
+    hideButton(removeMemberBtn);
   }
 }
 
@@ -608,6 +681,25 @@ function applyTheme(theme, persist = true) {
 
 function toggleTheme() {
   applyTheme(document.body.dataset.theme === "dark" ? "light" : "dark");
+}
+
+function applyGridLines(enabled, persist = true) {
+  const gridEnabled = Boolean(enabled);
+  document.body.dataset.grid = gridEnabled ? "on" : "off";
+
+  if (gridToggleBtn) {
+    gridToggleBtn.setAttribute("aria-pressed", gridEnabled ? "true" : "false");
+    gridToggleBtn.setAttribute("aria-label", gridEnabled ? "Disable dark grid lines" : "Enable dark grid lines");
+    gridToggleBtn.title = gridEnabled ? "Disable dark grid lines" : "Enable dark grid lines";
+  }
+
+  if (persist) {
+    safeStorage.setItem(GRID_STORAGE_KEY, gridEnabled ? "on" : "off");
+  }
+}
+
+function toggleGridLines() {
+  applyGridLines(document.body.dataset.grid !== "on");
 }
 
 function getTimeOffBrand() {
@@ -1116,6 +1208,7 @@ function attachEvents() {
   });
 
   themeToggleBtn.addEventListener("click", toggleTheme);
+  gridToggleBtn.addEventListener("click", toggleGridLines);
 
   memberTotals.addEventListener("click", (event) => {
     const toggle = event.target.closest(".member-total-toggle");
@@ -1278,6 +1371,14 @@ function attachEvents() {
     await exportScheduleToNewExcel();
   });
 
+  exportAvailabilityBtn.addEventListener("click", async () => {
+    if (!window.XlsxPopulate) {
+      alert("Excel export library did not load. Please check your internet connection and reload.");
+      return;
+    }
+    await exportAvailabilityToExcel();
+  });
+
   refreshDataBtn.addEventListener("click", async () => {
     await refreshFromCloud();
   });
@@ -1407,7 +1508,7 @@ function updateTableSizing() {
   if (!maxWeekDays) return;
 
   const rootStyles = getComputedStyle(document.documentElement);
-  const memberWidth = parseInt(rootStyles.getPropertyValue("--member-col-width"), 10) || 128;
+  const memberWidth = parseInt(rootStyles.getPropertyValue("--member-col-width"), 10) || 170;
   const dayGapWidth = parseInt(rootStyles.getPropertyValue("--day-gap-width"), 10) || 8;
   const totalSlotColumns = maxWeekDays * slots.length;
   const availableWidth = tableWrap.clientWidth - memberWidth - (Math.max(0, maxWeekDays - 1) * dayGapWidth) - 8;
@@ -1621,6 +1722,152 @@ async function exportScheduleToNewExcel() {
   } finally {
     exportExcelBtn.disabled = false;
     exportExcelBtn.textContent = "Export Excel";
+  }
+}
+
+function getAvailabilityShift(slotIndex) {
+  const slot = slots[slotIndex];
+  if (!slot || slot.isLunch || slot.isFringe) return null;
+  if (slot.hour < 13) return "AM";
+  if (slot.hour >= 14) return "PM";
+  return null;
+}
+
+function getAvailableHoursForMemberDay(member, day) {
+  if (!day || day.foreign || isHoliday(day.key)) {
+    return { am: 0, pm: 0, total: 0 };
+  }
+
+  const memberSlots = state.assignments[day.key]?.[member];
+  if (!Array.isArray(memberSlots)) {
+    return { am: 0, pm: 0, total: 0 };
+  }
+
+  let am = 0;
+  let pm = 0;
+
+  for (let i = 0; i < memberSlots.length; i += 1) {
+    const value = memberSlots[i];
+    if (!(value === null || value === undefined || value === ".")) continue;
+
+    const shift = getAvailabilityShift(i);
+    if (shift === "AM") am += 0.5;
+    else if (shift === "PM") pm += 0.5;
+  }
+
+  return { am, pm, total: am + pm };
+}
+
+async function exportAvailabilityToExcel() {
+  try {
+    exportAvailabilityBtn.disabled = true;
+    exportAvailabilityBtn.textContent = "Exporting...";
+
+    const workbook = await window.XlsxPopulate.fromBlankAsync();
+    const sheet = workbook.sheet(0);
+    const monthLabel = MONTHS[currentMonthIdx].label;
+    const sheetName = `Summary ${monthLabel} By Person`;
+    sheet.name(sheetName.slice(0, 31));
+
+    const title = `${monthLabel.toUpperCase()} - Available Hours by Person`;
+    const dayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+    const headerRowDay = 4;
+    const headerRowShift = 5;
+    let rowNum = 6;
+    const monthTotals = Array.from({ length: 10 }, () => 0);
+    let monthGrandTotal = 0;
+
+    sheet.cell("A1").value(title).style("bold", true).style("fontSize", 14).style("fontColor", "FFFFFF").style("fill", "020028");
+    sheet.cell("A2").value("Available hours are based on unassigned white slots (#FFFFFF).").style("italic", true).style("fontColor", "6B7280");
+
+    sheet.cell(`A${headerRowDay}`).value("Week").style("bold", true).style("fill", "D3D3D3");
+    sheet.cell(`B${headerRowDay}`).value("Employee").style("bold", true).style("fill", "D3D3D3");
+    sheet.cell(`M${headerRowDay}`).value("Grand Total").style("bold", true).style("fill", "D3D3D3");
+
+    for (let dayIndex = 0; dayIndex < dayLabels.length; dayIndex += 1) {
+      const dayCol = String.fromCharCode(67 + (dayIndex * 2));
+      const pmCol = String.fromCharCode(68 + (dayIndex * 2));
+      sheet.cell(`${dayCol}${headerRowDay}`).value(dayLabels[dayIndex]).style("bold", true).style("fill", "D3D3D3");
+      sheet.cell(`${pmCol}${headerRowDay}`).value(dayLabels[dayIndex]).style("bold", true).style("fill", "D3D3D3");
+      sheet.cell(`${dayCol}${headerRowShift}`).value("AM").style("bold", true).style("fill", "ECECEC");
+      sheet.cell(`${pmCol}${headerRowShift}`).value("PM").style("bold", true).style("fill", "ECECEC");
+    }
+
+    sheet.cell(`A${headerRowShift}`).style("fill", "ECECEC");
+    sheet.cell(`B${headerRowShift}`).style("fill", "ECECEC");
+    sheet.cell(`M${headerRowShift}`).style("fill", "ECECEC");
+
+    sheet.column("A").width(14);
+    sheet.column("B").width(28);
+    for (const col of ["C", "D", "E", "F", "G", "H", "I", "J", "K", "L"]) {
+      sheet.column(col).width(8);
+    }
+    sheet.column("M").width(12);
+
+    for (let weekIndex = 0; weekIndex < weeks.length; weekIndex += 1) {
+      const weekDays = weeks[weekIndex];
+      const weekLabel = `Week ${weekIndex + 1}`;
+      const weekRows = [...state.members]
+        .sort(compareAvailabilityMemberOrder)
+        .map((member) => {
+          const dailyValues = weekDays.map((day) => getAvailableHoursForMemberDay(member, day));
+          const total = dailyValues.reduce((sum, dayValue) => sum + dayValue.total, 0);
+          return { member, dailyValues, total };
+        });
+
+      const weekTotals = Array.from({ length: 10 }, () => 0);
+      let weekGrandTotal = 0;
+
+      for (let memberIndex = 0; memberIndex < weekRows.length; memberIndex += 1) {
+        const weekRow = weekRows[memberIndex];
+        sheet.cell(`A${rowNum}`).value(memberIndex === 0 ? weekLabel : "");
+        sheet.cell(`B${rowNum}`).value(weekRow.member);
+
+        let colIndex = 0;
+        for (const dayValue of weekRow.dailyValues) {
+          const values = [dayValue.am, dayValue.pm];
+          for (const value of values) {
+            const col = String.fromCharCode(67 + colIndex);
+            sheet.cell(`${col}${rowNum}`).value(value).style("numberFormat", "0.0");
+            weekTotals[colIndex] += value;
+            monthTotals[colIndex] += value;
+            colIndex += 1;
+          }
+        }
+
+        sheet.cell(`M${rowNum}`).value(weekRow.total).style("numberFormat", "0.0");
+        weekGrandTotal += weekRow.total;
+        monthGrandTotal += weekRow.total;
+        rowNum += 1;
+      }
+
+      sheet.cell(`A${rowNum}`).value(`${weekLabel} Total`).style("bold", true).style("fill", "DCE6F1");
+      sheet.cell(`B${rowNum}`).style("fill", "DCE6F1");
+      for (let i = 0; i < weekTotals.length; i += 1) {
+        const col = String.fromCharCode(67 + i);
+        sheet.cell(`${col}${rowNum}`).value(weekTotals[i]).style("bold", true).style("fill", "DCE6F1").style("numberFormat", "0.0");
+      }
+      sheet.cell(`M${rowNum}`).value(weekGrandTotal).style("bold", true).style("fill", "DCE6F1").style("numberFormat", "0.0");
+      rowNum += 1;
+    }
+
+    sheet.cell(`A${rowNum}`).value("Month Total").style("bold", true).style("fill", "C6E0B4");
+    sheet.cell(`B${rowNum}`).style("fill", "C6E0B4");
+    for (let i = 0; i < monthTotals.length; i += 1) {
+      const col = String.fromCharCode(67 + i);
+      sheet.cell(`${col}${rowNum}`).value(monthTotals[i]).style("bold", true).style("fill", "C6E0B4").style("numberFormat", "0.0");
+    }
+    sheet.cell(`M${rowNum}`).value(monthGrandTotal).style("bold", true).style("fill", "C6E0B4").style("numberFormat", "0.0");
+
+    const out = await workbook.outputAsync();
+    const fileMonthLabel = monthLabel.replace(/\s+/g, "_");
+    downloadBlob(out, `DXI_Availability_${fileMonthLabel}_${todayStamp()}.xlsx`);
+    showToast("Availability exported successfully");
+  } catch (error) {
+    console.error(error);
+  } finally {
+    exportAvailabilityBtn.disabled = false;
+    exportAvailabilityBtn.textContent = "Export Availability";
   }
 }
 
@@ -1882,6 +2129,30 @@ function applyLegendCollapse(collapsed) {
   toggleLegendBtn.title = collapsed ? "Expand Brand Palette" : "Collapse Brand Palette";
 }
 
+function buildDotCursorValue(color) {
+  const normalized = normalizeHex(color);
+  if (!normalized) return "crosshair";
+
+  const svg = [
+    "<svg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 12 12'>",
+    `<circle cx='6' cy='6' r='3' fill='${normalized}' stroke='#181818' stroke-width='0.5'/>`,
+    "</svg>"
+  ].join("");
+
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 6 6, crosshair`;
+}
+
+function updateSlotCursor() {
+  const root = document.documentElement;
+  const eraserColor = getComputedStyle(root).getPropertyValue("--eraser-color").trim() || "#E52D4D";
+  const activeBrand = state?.brands?.find((brand) => brand.id === selectedBrandId) || null;
+  const cursorColor = paintMode === "erase"
+    ? eraserColor
+    : (activeBrand?.color || getComputedStyle(root).getPropertyValue("--accent").trim() || "#0E75FF");
+
+  root.style.setProperty("--slot-cell-cursor", buildDotCursorValue(cursorColor));
+}
+
 function updateEraserVisual() {
   const timeOffBrand = getTimeOffBrand();
   const timeOffActive = paintMode === "brand" && selectedBrandId === timeOffBrand?.id;
@@ -1899,6 +2170,8 @@ function updateEraserVisual() {
     timeOffBtn.disabled = !timeOffBrand;
     timeOffBtn.title = timeOffBrand ? "Time Off" : "Time Off brand not found";
   }
+
+  updateSlotCursor();
 }
 
 function toLabel(hour, minute) {
