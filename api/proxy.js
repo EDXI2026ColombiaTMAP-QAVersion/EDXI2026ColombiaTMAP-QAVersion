@@ -1,5 +1,7 @@
 const DEFAULT_MIN_DATE = "2026-01-01";
 const DEFAULT_MAX_DATE = "2026-12-31";
+const LEGACY_SLOT_COUNT = 20;
+const CURRENT_SLOT_COUNT = 22;
 
 function setCorsHeaders(res) {
   res.setHeader("Access-Control-Allow-Credentials", "true");
@@ -106,7 +108,7 @@ function decodeAssignmentPattern(pattern, brandsByLegacyIndex) {
     index += 1;
   }
 
-  return slots;
+  return normalizeSlots(slots);
 }
 
 function encodeAssignmentPattern(slots, brandLegacyById) {
@@ -126,10 +128,78 @@ function encodeAssignmentPattern(slots, brandLegacyById) {
 function normalizeSlots(slots) {
   if (!Array.isArray(slots)) return [];
 
-  return slots.map((value) => {
+  const normalized = slots.map((value) => {
     if (value === undefined || value === ".") return null;
     return value;
   });
+
+  if (normalized.length === LEGACY_SLOT_COUNT) {
+    return [null, ...normalized, null];
+  }
+
+  return normalized.length > CURRENT_SLOT_COUNT
+    ? normalized.slice(0, CURRENT_SLOT_COUNT)
+    : normalized;
+}
+
+function createEmptyChangeSet() {
+  return {
+    assignmentRows: new Map(),
+    memberChanges: new Map(),
+    brandIds: new Set(),
+    removedMemberNames: new Set(),
+    removedBrandIds: new Set()
+  };
+}
+
+function assignmentRowKey(workDate, member) {
+  return JSON.stringify([workDate, member]);
+}
+
+function normalizeChangeSet(changes) {
+  const normalized = createEmptyChangeSet();
+
+  for (const row of Array.isArray(changes?.assignmentRows) ? changes.assignmentRows : []) {
+    const workDate = typeof row?.workDate === "string"
+      ? row.workDate
+      : (typeof row?.dayKey === "string" ? row.dayKey : "");
+    const member = typeof row?.member === "string" ? row.member : "";
+    if (!workDate || !member) continue;
+    normalized.assignmentRows.set(assignmentRowKey(workDate, member), { workDate, member });
+  }
+
+  for (const change of Array.isArray(changes?.memberChanges) ? changes.memberChanges : []) {
+    const name = typeof change === "string" ? change : change?.name;
+    const previousName = typeof change === "object" && typeof change?.previousName === "string"
+      ? change.previousName
+      : null;
+    if (typeof name !== "string" || !name.trim()) continue;
+    normalized.memberChanges.set(normalizeKey(name), { name, previousName });
+  }
+
+  for (const brandId of Array.isArray(changes?.brandIds) ? changes.brandIds : []) {
+    if (typeof brandId === "string" && brandId) normalized.brandIds.add(brandId);
+  }
+
+  for (const memberName of Array.isArray(changes?.removedMemberNames) ? changes.removedMemberNames : []) {
+    if (typeof memberName === "string" && memberName) {
+      normalized.removedMemberNames.add(memberName);
+    }
+  }
+
+  for (const brandId of Array.isArray(changes?.removedBrandIds) ? changes.removedBrandIds : []) {
+    if (typeof brandId === "string" && brandId) normalized.removedBrandIds.add(brandId);
+  }
+
+  return normalized;
+}
+
+function hasChanges(changes) {
+  return changes.assignmentRows.size > 0
+    || changes.memberChanges.size > 0
+    || changes.brandIds.size > 0
+    || changes.removedMemberNames.size > 0
+    || changes.removedBrandIds.size > 0;
 }
 
 async function loadState(config) {
@@ -196,7 +266,7 @@ async function loadState(config) {
   };
 }
 
-function buildMemberRecords(state, existingMembers) {
+function buildMemberRecords(state, existingMembers, previousNamesByCurrent = new Map()) {
   const byEmployeeCode = new Map();
   const byName = new Map();
 
@@ -210,7 +280,10 @@ function buildMemberRecords(state, existingMembers) {
     if (typeof memberName !== "string" || !memberName.trim()) continue;
 
     const employeeCode = String(state.memberDetails?.[memberName]?.memberId || "").trim() || null;
-    const existing = (employeeCode && byEmployeeCode.get(employeeCode)) || byName.get(normalizeKey(memberName));
+    const previousName = previousNamesByCurrent.get(normalizeKey(memberName));
+    const existing = (employeeCode && byEmployeeCode.get(employeeCode))
+      || byName.get(normalizeKey(memberName))
+      || (previousName ? byName.get(normalizeKey(previousName)) : null);
 
     records.push({
       ...(existing?.id ? { id: existing.id } : {}),
@@ -221,6 +294,41 @@ function buildMemberRecords(state, existingMembers) {
   }
 
   return records;
+}
+
+async function saveMembers(config, memberRecords) {
+  const savedMembers = [];
+  const groups = [
+    {
+      records: memberRecords.filter((record) => record.id),
+      path: "members?on_conflict=id&select=id,employee_code,name,active"
+    },
+    {
+      records: memberRecords.filter((record) => !record.id && record.employee_code),
+      path: "members?on_conflict=employee_code&select=id,employee_code,name,active"
+    },
+    {
+      records: memberRecords.filter((record) => !record.id && !record.employee_code),
+      path: "members?select=id,employee_code,name,active"
+    }
+  ];
+
+  for (const group of groups) {
+    for (const batch of chunkArray(group.records, 250)) {
+      const result = await supabaseRequest(config, group.path, {
+        method: "POST",
+        headers: {
+          Prefer: group.path.includes("on_conflict")
+            ? "resolution=merge-duplicates,return=representation"
+            : "return=representation"
+        },
+        body: JSON.stringify(batch)
+      });
+      savedMembers.push(...(result || []));
+    }
+  }
+
+  return savedMembers;
 }
 
 function buildBrandRecords(state, existingBrands) {
@@ -257,30 +365,59 @@ function buildBrandRecords(state, existingBrands) {
     });
 }
 
-async function saveState(config, state) {
+async function saveState(config, state, requestedChanges) {
   const safeState = {
     members: Array.isArray(state?.members) ? state.members : [],
     brands: Array.isArray(state?.brands) ? state.brands : [],
     assignments: state?.assignments && typeof state.assignments === "object" ? state.assignments : {},
     memberDetails: state?.memberDetails && typeof state.memberDetails === "object" ? state.memberDetails : {}
   };
+  const changes = normalizeChangeSet(requestedChanges);
+
+  if (!hasChanges(changes)) {
+    return {
+      members: 0,
+      brands: 0,
+      assignments: 0,
+      removedMembers: 0,
+      removedBrands: 0
+    };
+  }
+
+  const assignmentSnapshots = [];
+  for (const { workDate, member } of changes.assignmentRows.values()) {
+    const sourceSlots = safeState.assignments?.[workDate]?.[member];
+    if (!Array.isArray(sourceSlots)) {
+      throw new Error(`No se encontraron horas para "${member}" el ${workDate}.`);
+    }
+    assignmentSnapshots.push({
+      workDate,
+      member,
+      slots: normalizeSlots([...sourceSlots])
+    });
+  }
 
   const [existingMembers, existingBrands] = await Promise.all([
     supabaseRequest(config, "members?select=id,employee_code,name,active"),
     supabaseRequest(config, "brands?select=id,legacy_index,name,color,billing_code,active")
   ]);
 
-  const memberRecords = buildMemberRecords(safeState, existingMembers || []);
-  const brandRecords = buildBrandRecords(safeState, existingBrands || []);
+  const previousNamesByCurrent = new Map(
+    [...changes.memberChanges.values()]
+      .filter((change) => change.previousName)
+      .map((change) => [normalizeKey(change.name), change.previousName])
+  );
+  const changedMemberNames = new Set(changes.memberChanges.keys());
+  const memberRecords = buildMemberRecords(
+    safeState,
+    existingMembers || [],
+    previousNamesByCurrent
+  ).filter((member) => changedMemberNames.has(normalizeKey(member.name)));
+  const brandRecords = buildBrandRecords(safeState, existingBrands || [])
+    .filter((brand) => changes.brandIds.has(brand.id));
 
   const savedMembers = memberRecords.length
-    ? await supabaseRequest(config, "members?on_conflict=id&select=id,employee_code,name,active", {
-        method: "POST",
-        headers: {
-          Prefer: "resolution=merge-duplicates,return=representation"
-        },
-        body: JSON.stringify(memberRecords)
-      })
+    ? await saveMembers(config, memberRecords)
     : [];
 
   const savedBrands = brandRecords.length
@@ -293,63 +430,66 @@ async function saveState(config, state) {
       })
     : [];
 
-  const activeMemberIds = new Set((savedMembers || []).map((member) => member.id));
-  const activeBrandIds = new Set((savedBrands || []).map((brand) => brand.id));
+  const removedMemberKeys = new Set(
+    [...changes.removedMemberNames].map((name) => normalizeKey(name))
+  );
+  const removedMemberIds = (existingMembers || [])
+    .filter((member) => removedMemberKeys.has(normalizeKey(member.name)))
+    .map((member) => member.id);
 
-  const staleMemberIds = (existingMembers || [])
-    .map((member) => member.id)
-    .filter((id) => !activeMemberIds.has(id));
-  const staleBrandIds = (existingBrands || [])
-    .map((brand) => brand.id)
-    .filter((id) => !activeBrandIds.has(id));
-
-  if (staleMemberIds.length) {
-    await supabaseRequest(config, `members?id=${buildInFilter(staleMemberIds)}`, {
+  if (removedMemberIds.length) {
+    await supabaseRequest(config, `members?id=${buildInFilter(removedMemberIds)}`, {
       method: "PATCH",
       body: JSON.stringify({ active: false })
     });
-  }
-
-  if (staleBrandIds.length) {
-    await supabaseRequest(config, `brands?id=${buildInFilter(staleBrandIds)}`, {
-      method: "PATCH",
-      body: JSON.stringify({ active: false })
-    });
-  }
-
-  const memberIdByName = new Map((savedMembers || []).map((member) => [member.name, member.id]));
-  const brandLegacyById = new Map((savedBrands || []).map((brand) => [brand.id, brand.legacy_index]));
-  const assignmentDates = Object.keys(safeState.assignments || {}).sort();
-  const minDate = assignmentDates[0] || DEFAULT_MIN_DATE;
-  const maxDate = assignmentDates[assignmentDates.length - 1] || DEFAULT_MAX_DATE;
-
-  await supabaseRequest(
-    config,
-    `daily_assignments?work_date=gte.${minDate}&work_date=lte.${maxDate}`,
-    {
+    await supabaseRequest(config, `daily_assignments?member_id=${buildInFilter(removedMemberIds)}`, {
       method: "DELETE",
       headers: {
         Prefer: "return=minimal"
       }
-    }
+    });
+  }
+
+  const removedBrandIds = (existingBrands || [])
+    .map((brand) => brand.id)
+    .filter((id) => changes.removedBrandIds.has(id));
+
+  if (removedBrandIds.length) {
+    await supabaseRequest(config, `brands?id=${buildInFilter(removedBrandIds)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ active: false })
+    });
+  }
+
+  const availableMembers = [...(existingMembers || []), ...(savedMembers || [])];
+  const availableBrands = [...(existingBrands || []), ...(savedBrands || [])];
+  const memberIdByName = new Map(
+    availableMembers.map((member) => [normalizeKey(member.name), member.id])
+  );
+  const brandLegacyById = new Map(
+    availableBrands.map((brand) => [brand.id, brand.legacy_index])
   );
 
   const assignmentRows = [];
-  for (const [workDate, dayAssignments] of Object.entries(safeState.assignments || {})) {
-    if (!dayAssignments || typeof dayAssignments !== "object") continue;
-
-    for (const memberName of safeState.members) {
-      const memberId = memberIdByName.get(memberName);
-      const slots = normalizeSlots(dayAssignments[memberName]);
-      if (!memberId || !slots.some(isRealAssignmentValue)) continue;
-
-      assignmentRows.push({
-        work_date: workDate,
-        member_id: memberId,
-        assignment_pattern: encodeAssignmentPattern(slots, brandLegacyById),
-        slots
-      });
+  for (const { workDate, member, slots } of assignmentSnapshots) {
+    const memberId = memberIdByName.get(normalizeKey(member));
+    if (!memberId) {
+      throw new Error(`No se encontro el miembro "${member}" en Supabase.`);
     }
+
+    const missingBrandId = slots.find(
+      (value) => isRealAssignmentValue(value) && !brandLegacyById.has(value)
+    );
+    if (missingBrandId) {
+      throw new Error(`No se encontro la marca "${missingBrandId}" en Supabase.`);
+    }
+
+    assignmentRows.push({
+      work_date: workDate,
+      member_id: memberId,
+      assignment_pattern: encodeAssignmentPattern(slots, brandLegacyById),
+      slots
+    });
   }
 
   for (const batch of chunkArray(assignmentRows, 250)) {
@@ -369,7 +509,9 @@ async function saveState(config, state) {
   return {
     members: (savedMembers || []).length,
     brands: (savedBrands || []).length,
-    assignments: assignmentRows.length
+    assignments: assignmentRows.length,
+    removedMembers: removedMemberIds.length,
+    removedBrands: removedBrandIds.length
   };
 }
 
@@ -382,14 +524,13 @@ export default async function handler(req, res) {
   }
 
   try {
-    const config = getConfig();
-
     if (req.method === "GET") {
       if ((req.query.action || "getData") !== "getData") {
         res.status(400).json({ success: false, error: "Unsupported GET action." });
         return;
       }
 
+      const config = getConfig();
       const data = await loadState(config);
       res.status(200).json({ success: true, data });
       return;
@@ -401,7 +542,17 @@ export default async function handler(req, res) {
         return;
       }
 
-      const summary = await saveState(config, req.body.data);
+      const changes = req.body?.changes;
+      if (!changes || typeof changes !== "object" || Array.isArray(changes)) {
+        res.status(400).json({
+          success: false,
+          error: "saveData requires an explicit changes object."
+        });
+        return;
+      }
+
+      const config = getConfig();
+      const summary = await saveState(config, req.body.data, changes);
       res.status(200).json({
         success: true,
         message: "Supabase synchronized successfully.",

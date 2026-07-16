@@ -16,8 +16,9 @@
   --slot-width: 18px;
   --slot-cell-cursor: crosshair;
   --member-col-width: 170px;
+  --member-label-trailing-space: 7px;
   --day-gap-width: 8px;
-  --grid-line: #cacaca;
+  --grid-line: #e2e2e2;
   --grid-line-strong: #9FAAC3;
   --hover-guide-col: #02002800;
   --hover-guide-row: #020028;
@@ -107,16 +108,16 @@ body[data-grid="on"] {
   --grid-line: #181818;
 }
 
-body[data-grid="off"] {
-  --grid-line: #cacaca;
-}
+/* body[data-grid="off"] {
+  --grid-line: #e2e2e2;
+} */
 
 * {
   box-sizing: border-box;
 }
 
 body {
-  zoom: 0.9;
+  zoom: 0.8;
   margin: 0;
   font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
   color: var(--text);
@@ -663,7 +664,7 @@ td {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  padding-right: 16px;
+  padding-right: 0;
 }
 
 .member-edit-btn {
