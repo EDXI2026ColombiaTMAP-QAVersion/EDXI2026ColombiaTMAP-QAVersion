@@ -130,6 +130,7 @@ let state = null;
 let selectedBrandId = null;
 let paintMode = "brand";
 let isMouseDown = false;
+let activePaintMember = null;
 let tableResizeObserver = null;
 let activeHoverGuides = { row: null };
 
@@ -684,6 +685,7 @@ function renderPalette() {
 
 function renderTable() {
   clearHoverGuides();
+  renderScheduleColGroup();
   scheduleHead.innerHTML = "";
   scheduleBody.innerHTML = "";
 
@@ -827,6 +829,36 @@ function renderTable() {
   }
 
   updateTableSizing();
+}
+
+function renderScheduleColGroup() {
+  if (!scheduleTable) return;
+
+  scheduleTable.querySelector("colgroup")?.remove();
+
+  const maxWeekDays = weeks.reduce((max, week) => Math.max(max, week.length), 0);
+  if (!maxWeekDays) return;
+
+  const colGroup = document.createElement("colgroup");
+  const memberCol = document.createElement("col");
+  memberCol.style.width = "var(--member-col-width)";
+  colGroup.appendChild(memberCol);
+
+  for (let i = 0; i < maxWeekDays; i += 1) {
+    for (let j = 0; j < slots.length; j += 1) {
+      const slotCol = document.createElement("col");
+      slotCol.style.width = "var(--slot-width)";
+      colGroup.appendChild(slotCol);
+    }
+
+    if (i < maxWeekDays - 1) {
+      const gapCol = document.createElement("col");
+      gapCol.style.width = "var(--day-gap-width)";
+      colGroup.appendChild(gapCol);
+    }
+  }
+
+  scheduleTable.insertBefore(colGroup, scheduleTable.firstChild);
 }
 
 function compactSlotLabel(slot) {
@@ -1277,6 +1309,7 @@ function attachEvents() {
     if (!cell || cell.classList.contains("lunch") || cell.classList.contains("foreign") || cell.classList.contains("holiday")) return;
     isMouseDown = true;
     const member = cell.dataset.member;
+    activePaintMember = member;
     const dayKey = cell.dataset.day;
     const slotIndex = Number(cell.dataset.slot);
     applyToCell(member, dayKey, slotIndex);
@@ -1290,6 +1323,7 @@ function attachEvents() {
     if (!isMouseDown) return;
     if (!cell || cell.classList.contains("lunch") || cell.classList.contains("foreign") || cell.classList.contains("holiday")) return;
     const member = cell.dataset.member;
+    if (member !== activePaintMember) return;
     const dayKey = cell.dataset.day;
     const slotIndex = Number(cell.dataset.slot);
     applyToCell(member, dayKey, slotIndex);
@@ -1299,6 +1333,7 @@ function attachEvents() {
   scheduleBody.addEventListener("mouseup", async () => {
     if (!isMouseDown) return;
     isMouseDown = false;
+    activePaintMember = null;
     renderTable();
     renderTotals();
     if (_lastPaintSyncPromise) {
@@ -1311,6 +1346,7 @@ function attachEvents() {
   document.addEventListener("mouseup", async () => {
     if (!isMouseDown) return;
     isMouseDown = false;
+    activePaintMember = null;
     renderTable();
     renderTotals();
     if (_lastPaintSyncPromise) {

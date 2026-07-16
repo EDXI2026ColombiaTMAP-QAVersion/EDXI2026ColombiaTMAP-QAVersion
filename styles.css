@@ -1,5 +1,5 @@
 :root {
-  --bg: #F2F2F2;
+  --bg: #FFFFFF;
   --panel: #FFFFFF;
   --line: #E0E0E0;
   --text: #0D0D0D;
@@ -16,7 +16,7 @@
   --slot-width: 18px;
   --member-col-width: 128px;
   --day-gap-width: 8px;
-  --grid-line: #e6e6e6;
+  --grid-line: rgb(169, 169, 169);
   --grid-line-strong: #9FAAC3;
   --hover-guide-col: #02002800;
   --hover-guide-row: #020028;
@@ -111,6 +111,7 @@ body {
   font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
   color: var(--text);
   background: var(--bg);
+  max-width: 2700px;
 }
 
 .topbar {
@@ -585,7 +586,8 @@ body[data-theme="dark"] .theme-toggle-button::before {
 }
 
 table {
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   border-collapse: collapse;
   font-size: 0.62rem;
   background: var(--table-bg);
@@ -617,24 +619,29 @@ td {
 .member-head,
 .member-cell {
   text-align: left;
+  width: var(--member-col-width);
+  min-width: var(--member-col-width);
+  max-width: var(--member-col-width);
+  overflow: hidden;
+  box-sizing: border-box;
   padding-left: 5px;
   position: sticky;
   left: 0;
   z-index: 1;
   background: var(--member-bg);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 4px;
+  display: table-cell;
+  vertical-align: middle;
   border-left: 3px solid transparent;
   transition: border-left 0.2s ease;
 }
 
 .member-cell span {
+  display: block;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  padding-right: 16px;
 }
 
 .member-edit-btn {
@@ -644,9 +651,12 @@ td {
   cursor: pointer;
   opacity: 0.3;
   padding: 0 2px;
-  flex-shrink: 0;
   line-height: 1;
   display: none;
+  position: absolute;
+  right: 2px;
+  top: 50%;
+  transform: translateY(-50%);
 }
 .member-cell:hover .member-edit-btn {
   opacity: 1;
