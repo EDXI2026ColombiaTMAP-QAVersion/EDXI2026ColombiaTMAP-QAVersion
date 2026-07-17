@@ -35,9 +35,20 @@ const SLOT_DURATION_MINUTES = 30;
 const CORE_DAY_START_MINUTES = 8 * 60;
 const CORE_DAY_END_MINUTES = 17 * 60;
 const APP_LEGACY_SLOT_COUNT = 20;
+const TIME_OFF_COLOR = "#d9d9d996";
 
 const fallbackColors = ["#2D6A4F", "#1D3557", "#8F2D56", "#CA6702", "#6A4C93", "#264653", "#386641", "#9D4EDD"];
 const expandedMemberTotals = new Set(readStoredStringArray(MEMBER_TOTALS_EXPANDED_KEY));
+
+function normalizeBrandVisual(brand, index = 0) {
+  const isTimeOff = (brand?.name || "").trim().toLowerCase() === "time off"
+    || brand?.billingCode === "000000"
+    || brand?.billing_code === "000000";
+  const color = isTimeOff
+    ? TIME_OFF_COLOR
+    : (brand?.color === "#000000" ? fallbackColors[index % fallbackColors.length] : brand?.color);
+  return { ...brand, color };
+}
 
 function readStoredStringArray(key) {
   const raw = safeStorage.getItem(key);
@@ -54,10 +65,8 @@ function resolveDefaults() {
   const pre = window.PRELOADED_DATA || null;
   const members = pre?.members?.length ? pre.members : ["Open Seat"];
   const brands = 
-    (pre?.brands?.length ? pre.brands : [{ id: "b1", name: "General", color: "#2D6A4F" }]).map((brand, idx) => ({
-      ...brand,
-      color: brand.color === "#000000" ? fallbackColors[idx % fallbackColors.length] : brand.color
-    }));
+    (pre?.brands?.length ? pre.brands : [{ id: "b1", name: "General", color: "#2D6A4F" }])
+      .map(normalizeBrandVisual);
   return { members, brands, pre };
 }
 
@@ -222,6 +231,7 @@ function init() {
   if (PRELOADED?.assignments) {
     mergeSheetIntoState(state, PRELOADED, defaultMembers);
   }
+  state.brands = (state.brands || []).map(normalizeBrandVisual);
   // Ensure memberDetails always exists
   if (!state.memberDetails) {
     state.memberDetails = {};
@@ -631,11 +641,7 @@ function mergeSheetIntoState(state, PRELOADED, defaultMembers) {
 
   // Merge brands from Sheet if available
   if (PRELOADED.brands?.length) {
-    state.brands = 
-      PRELOADED.brands.map((brand, idx) => ({
-        ...brand,
-        color: brand.color === "#000000" ? fallbackColors[idx % fallbackColors.length] : brand.color
-      }));
+    state.brands = PRELOADED.brands.map(normalizeBrandVisual);
   }
 
   // Ensure all members have slots for all weekdays
@@ -1433,7 +1439,12 @@ function attachEvents() {
     const result = await openBrandModal("Add Brand", "", "#1D3557");
     if (!result) return;
     const id = `b${Date.now()}`;
-    state.brands.push({ id, name: result.name, color: result.color, billingCode: result.billingCode });
+    state.brands.push(normalizeBrandVisual({
+      id,
+      name: result.name,
+      color: result.color,
+      billingCode: result.billingCode
+    }, state.brands.length));
     selectedBrandId = id;
     paintMode = "brand";
     renderPalette();
@@ -1467,7 +1478,12 @@ function attachEvents() {
     for (const brand of imported) {
       if (!state.brands.find(b => b.name === brand.name)) {
         const id = `b${Date.now()}_${added}`;
-        state.brands.push({ id, name: brand.name, color: brand.color, billingCode: brand.billingCode });
+        state.brands.push(normalizeBrandVisual({
+          id,
+          name: brand.name,
+          color: brand.color,
+          billingCode: brand.billingCode
+        }, state.brands.length));
         addedBrandIds.push(id);
         added++;
       }
@@ -2143,9 +2159,12 @@ async function editBrand(brandId) {
   const result = await openBrandModal("Edit Brand", brand.name, brand.color, brand.billingCode || "");
   if (!result) return;
 
-  brand.name = result.name;
-  brand.color = result.color;
-  brand.billingCode = result.billingCode;
+  Object.assign(brand, normalizeBrandVisual({
+    ...brand,
+    name: result.name,
+    color: result.color,
+    billingCode: result.billingCode
+  }, state.brands.indexOf(brand)));
   renderPalette();
   renderTable();
   renderTotals();

@@ -117,6 +117,30 @@ test("availability rows are ordered from highest to lowest Grand Total", () => {
   );
 });
 
+test("Time Off always uses the configured translucent gray", () => {
+  const storage = createMemoryStorage();
+  const context = vm.createContext({
+    localStorage: storage,
+    window: { localStorage: storage }
+  });
+
+  vm.runInContext(
+    `${APP_SOURCE}\n;globalThis.__normalizeBrandForTests = normalizeBrandVisual;`,
+    context,
+    { filename: APP_PATH }
+  );
+
+  assert.equal(
+    context.__normalizeBrandForTests({
+      id: "time-off",
+      name: "TIME OFF",
+      color: "#F0F2F1",
+      billingCode: "000000"
+    }).color,
+    "#d9d9d996"
+  );
+});
+
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
