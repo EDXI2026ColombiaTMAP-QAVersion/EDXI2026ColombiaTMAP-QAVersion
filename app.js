@@ -1271,21 +1271,31 @@ function applyToCell(member, dayKey, slotIndex) {
   });
 }
 
-async function finishLastPaintSync(showNotification) {
+function finishLastPaintSync() {
   const paintSyncPromise = _lastPaintSyncPromise;
   if (!paintSyncPromise) return;
 
-  // Clear only the gesture we just captured. A new gesture can now register its
-  // own promise without an older mouseup handler erasing or awaiting it.
+  // Release the UI immediately. The persistent outbox and debounce queue own
+  // the network work, so another gesture can start while this one is syncing.
   _lastPaintSyncPromise = null;
-  if (typeof window.flushPendingScheduleChanges === "function") {
-    await window.flushPendingScheduleChanges();
-  }
+  Promise.resolve(paintSyncPromise)
+    .then((ok) => {
+      if (!ok) console.warn("Guardado pendiente; se reintentará automáticamente.");
+    })
+    .catch((error) => console.error("Error sincronizando el trazo:", error));
+}
 
-  const ok = await paintSyncPromise;
-  if (showNotification) {
-    if (ok) showToast("Changes synced", "success");
-    else console.warn("Guardado pendiente; se reintentará automáticamente.");
+function updateRenderedMemberHours(member) {
+  if (!member || !scheduleBody) return;
+  const memberRows = scheduleBody.querySelectorAll(".member-row");
+
+  for (const row of memberRows) {
+    if (row.dataset.member !== member) continue;
+    const weekIndex = Number(row.dataset.weekIndex);
+    const label = row.querySelector(".member-cell span");
+    if (label) {
+      label.textContent = `${member} (${memberWeekHours(member, weekIndex).toFixed(1)}h)`;
+    }
   }
 }
 
@@ -1544,23 +1554,24 @@ function attachEvents() {
     paintCell(cell, state.assignments[dayKey][member][slotIndex], slotIndex);
   });
 
-  scheduleBody.addEventListener("mouseup", async () => {
+  scheduleBody.addEventListener("mouseup", () => {
     if (!isMouseDown) return;
+    const finishedMember = activePaintMember;
     isMouseDown = false;
     activePaintMember = null;
-    renderTable();
+    updateRenderedMemberHours(finishedMember);
     renderTotals();
-    await finishLastPaintSync(true);
+    finishLastPaintSync();
   });
 
-  document.addEventListener("mouseup", async () => {
+  document.addEventListener("mouseup", () => {
     if (!isMouseDown) return;
+    const finishedMember = activePaintMember;
     isMouseDown = false;
     activePaintMember = null;
-    renderTable();
+    updateRenderedMemberHours(finishedMember);
     renderTotals();
-    // Resolve silently — mouse was released outside the schedule (e.g. over brand palette)
-    await finishLastPaintSync(false);
+    finishLastPaintSync();
   });
 
   scheduleBody.addEventListener("mouseleave", () => {
