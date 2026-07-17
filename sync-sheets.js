@@ -904,8 +904,53 @@ function configureSheetSync(arg1, arg2) {
 
 mergeChangeSets(_pendingChanges, readPersistedChangeSet());
 
+function sanitizeResumedAssignmentBrands(stateToResume) {
+  if (!stateToResume || !_pendingChanges.assignmentRows.size) return 0;
+
+  const authoritativeBrands = _metadataCacheReady
+    ? _cachedBrands
+    : (Array.isArray(stateToResume.brands) ? stateToResume.brands : []);
+  const validBrandIds = new Set(
+    authoritativeBrands
+      .filter((brand) => brand && brand.active !== false && typeof brand.id === "string")
+      .map((brand) => brand.id)
+  );
+  const removedBrandIds = new Set();
+
+  for (const [key, row] of _pendingChanges.assignmentRows) {
+    const stateSlots = stateToResume.assignments?.[row.workDate]?.[row.member];
+    const sourceSlots = Array.isArray(row.slots) ? row.slots : stateSlots;
+    if (!Array.isArray(sourceSlots)) continue;
+
+    let changed = false;
+    const sanitizedSlots = normalizeSlots([...sourceSlots]).map((value) => {
+      if (!isRealAssignmentValue(value) || validBrandIds.has(value)) return value;
+      removedBrandIds.add(value);
+      changed = true;
+      return null;
+    });
+
+    if (!changed) continue;
+    _pendingChanges.assignmentRows.set(key, { ...row, slots: sanitizedSlots });
+    if (stateToResume.assignments?.[row.workDate]) {
+      stateToResume.assignments[row.workDate][row.member] = [...sanitizedSlots];
+    }
+  }
+
+  if (removedBrandIds.size > 0) {
+    persistOutbox();
+    console.warn(
+      "Se limpiaron referencias de marcas antiguas de la cola local de sincronización:",
+      [...removedBrandIds]
+    );
+  }
+
+  return removedBrandIds.size;
+}
+
 function resumePendingChanges(stateToResume) {
   if (!stateToResume || !hasChanges(_pendingChanges)) return false;
+  sanitizeResumedAssignmentBrands(stateToResume);
   _pendingState = stateToResume;
   schedulePendingFlush(100);
   return true;

@@ -726,8 +726,7 @@ async function refreshFromCloud() {
     renderTotals();
     showToast("Data refreshed from cloud", "success");
   } catch (error) {
-    console.error(error);
-    showToast(error.message || "Cloud refresh failed", "error");
+    console.error("Cloud refresh failed:", error);
   } finally {
     refreshDataBtn.disabled = false;
     refreshDataBtn.textContent = "Refresh";
@@ -1285,10 +1284,8 @@ async function finishLastPaintSync(showNotification) {
 
   const ok = await paintSyncPromise;
   if (showNotification) {
-    showToast(
-      ok ? "Changes synced" : "⚠️ Guardado pendiente; se reintentará automáticamente",
-      ok ? "success" : "error"
-    );
+    if (ok) showToast("Changes synced", "success");
+    else console.warn("Guardado pendiente; se reintentará automáticamente.");
   }
 }
 
@@ -1404,7 +1401,7 @@ function attachEvents() {
     if (typeof window.flushPendingScheduleChanges === "function") {
       const pendingSaved = await window.flushPendingScheduleChanges();
       if (!pendingSaved) {
-        showToast("No se puede eliminar el miembro mientras haya cambios pendientes", "error");
+        console.warn("No se puede eliminar el miembro mientras haya cambios pendientes.");
         return;
       }
     }
@@ -1612,7 +1609,8 @@ function attachEvents() {
     const ok = await saveState({
       assignmentRows: assignmentRowsFor(dayKey, member)
     });
-    showToast(ok ? "Changes synced" : "⚠️ No se pudo guardar, intenta de nuevo", ok ? "success" : "error");
+    if (ok) showToast("Changes synced", "success");
+    else console.warn("No se pudo guardar el cambio de Lunch; se reintentará automáticamente.");
   });
 
   document.addEventListener("click", () => { lunchMenu.style.display = "none"; _lunchCtx = null; });
@@ -2151,7 +2149,7 @@ async function deleteBrand(brandId) {
   if (typeof window.flushPendingScheduleChanges === "function") {
     const pendingSaved = await window.flushPendingScheduleChanges();
     if (!pendingSaved) {
-      showToast("No se puede eliminar la marca mientras haya cambios pendientes", "error");
+      console.warn("No se puede eliminar la marca mientras haya cambios pendientes.");
       return;
     }
   }
@@ -2279,7 +2277,7 @@ async function editMember(memberName) {
   if (typeof window.flushPendingScheduleChanges === "function") {
     const pendingSaved = await window.flushPendingScheduleChanges();
     if (!pendingSaved) {
-      showToast("No se puede editar el miembro mientras haya cambios pendientes", "error");
+      console.warn("No se puede editar el miembro mientras haya cambios pendientes.");
       return;
     }
   }
@@ -2556,12 +2554,14 @@ function openRecurringModal() {
     const ok = await saveState({
       assignmentRows: assignmentRowsFor(targetDays, member)
     });
-    showToast(
-      ok
-        ? `${member} scheduled for ${hoursPerDay.toFixed(1)}h/day across ${targetDays.length} day(s)`
-        : "⚠️ No se pudo guardar, intenta de nuevo",
-      ok ? "success" : "error"
-    );
+    if (ok) {
+      showToast(
+        `${member} scheduled for ${hoursPerDay.toFixed(1)}h/day across ${targetDays.length} day(s)`,
+        "success"
+      );
+    } else {
+      console.warn("No se pudo guardar el horario recurrente; se reintentará automáticamente.");
+    }
   };
 
   modal.hidden = false;

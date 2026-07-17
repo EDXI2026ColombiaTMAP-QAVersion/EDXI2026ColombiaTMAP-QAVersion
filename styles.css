@@ -1,5 +1,5 @@
 :root {
-  --bg: #FFFFFF;
+  --bg: #020028;
   --panel: #FFFFFF;
   --line: #E0E0E0;
   --text: #0D0D0D;
@@ -118,7 +118,7 @@ body[data-grid="on"] {
 
 body {
   zoom: 0.85;
-  margin: 0.000001;
+  margin: 0;
   font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
   color: var(--text);
   background: var(--bg);
@@ -198,14 +198,14 @@ body {
 .panel {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 0;
   padding: 10px;
   box-shadow: var(--panel-shadow);
 }
 
 .legend-panel {
   margin: 0 12px;
-  border-radius: 10px;
+  border-radius: 9px 9px 0 0;
   position: sticky;
   top: 0;
   z-index: 10;

@@ -561,3 +561,35 @@ test("a pending schedule row survives a browser reload through the outbox", asyn
   );
   assert.equal(localStorage.getItem("dxi-supabase-sync-outbox-v1"), null);
 });
+
+test("a stale brand reference is removed from the persisted outbox on reload", async () => {
+  const fake = createFakeSupabase();
+  const localStorage = createMemoryStorage();
+  localStorage.setItem(
+    "dxi-supabase-sync-outbox-v1",
+    JSON.stringify({
+      assignmentRows: [{
+        workDate: "2026-07-16",
+        member: "Ana",
+        memberId: "member-ana",
+        slots: ["brand-that-no-longer-exists", "LUNCH", "brand-1"]
+      }]
+    })
+  );
+
+  const adapter = loadAdapter(fake.fetchImpl, localStorage);
+  const restoredState = initialState();
+  restoredState.assignments["2026-07-16"].Ana = [
+    "brand-that-no-longer-exists",
+    "LUNCH",
+    "brand-1"
+  ];
+
+  assert.equal(adapter.resumePendingChanges(restoredState), true);
+  assert.equal(await adapter.flushPendingChangesNow(), true);
+  assert.deepEqual(
+    fake.database.assignments.get("2026-07-16|member-ana").slots,
+    [null, "LUNCH", "brand-1"]
+  );
+  assert.equal(localStorage.getItem("dxi-supabase-sync-outbox-v1"), null);
+});
