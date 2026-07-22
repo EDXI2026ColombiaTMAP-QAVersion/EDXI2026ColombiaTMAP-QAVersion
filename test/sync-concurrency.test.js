@@ -198,6 +198,30 @@ test("Time Off always uses the configured translucent gray", () => {
   );
 });
 
+test("Time Off is available even when it is missing from loaded brands", () => {
+  const storage = createMemoryStorage();
+  const context = vm.createContext({
+    localStorage: storage,
+    window: { localStorage: storage }
+  });
+
+  vm.runInContext(
+    `${APP_SOURCE}\n;globalThis.__ensureTimeOffForTests = ensureTimeOffBrand;`,
+    context,
+    { filename: APP_PATH }
+  );
+
+  const brands = [{ id: "brand-1", name: "Client", color: "#123456", billingCode: "123456" }];
+  const timeOffBrand = context.__ensureTimeOffForTests(brands);
+  const sameTimeOffBrand = context.__ensureTimeOffForTests(brands);
+
+  assert.equal(timeOffBrand.id, "time-off");
+  assert.equal(timeOffBrand.billingCode, "000000");
+  assert.equal(timeOffBrand.color, "#d9d9d996");
+  assert.equal(sameTimeOffBrand.id, timeOffBrand.id);
+  assert.equal(brands.length, 2);
+});
+
 test("the last Friday afternoon of every month is blocked as Time Off", () => {
   const storage = createMemoryStorage();
   const context = vm.createContext({

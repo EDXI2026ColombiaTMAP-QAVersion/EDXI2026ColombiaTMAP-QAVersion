@@ -36,18 +36,50 @@ const CORE_DAY_START_MINUTES = 8 * 60;
 const CORE_DAY_END_MINUTES = 17 * 60;
 const APP_LEGACY_SLOT_COUNT = 20;
 const TIME_OFF_COLOR = "#d9d9d996";
+const TIME_OFF_BRAND_ID = "time-off";
 
 const fallbackColors = ["#2D6A4F", "#1D3557", "#8F2D56", "#CA6702", "#6A4C93", "#264653", "#386641", "#9D4EDD"];
 const expandedMemberTotals = new Set(readStoredStringArray(MEMBER_TOTALS_EXPANDED_KEY));
 
 function normalizeBrandVisual(brand, index = 0) {
-  const isTimeOff = (brand?.name || "").trim().toLowerCase() === "time off"
-    || brand?.billingCode === "000000"
-    || brand?.billing_code === "000000";
+  const isTimeOff = isTimeOffBrand(brand);
   const color = isTimeOff
     ? TIME_OFF_COLOR
     : (brand?.color === "#000000" ? fallbackColors[index % fallbackColors.length] : brand?.color);
   return { ...brand, color };
+}
+
+function isTimeOffBrand(brand) {
+  const normalizedName = String(brand?.name || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+  const rawBillingCode = brand?.billingCode ?? brand?.billing_code;
+  const normalizedBillingCode = rawBillingCode === null || rawBillingCode === undefined || rawBillingCode === ""
+    ? ""
+    : String(rawBillingCode).trim().padStart(6, "0");
+
+  return normalizedName === "time off" || normalizedBillingCode === "000000";
+}
+
+function ensureTimeOffBrand(brands) {
+  if (!Array.isArray(brands)) return null;
+
+  const existing = brands.find(isTimeOffBrand);
+  if (existing) {
+    existing.color = TIME_OFF_COLOR;
+    return existing;
+  }
+
+  const timeOffBrand = {
+    id: TIME_OFF_BRAND_ID,
+    name: "Time Off",
+    color: TIME_OFF_COLOR,
+    billingCode: "000000"
+  };
+  brands.push(timeOffBrand);
+  return timeOffBrand;
 }
 
 function readStoredStringArray(key) {
@@ -234,6 +266,7 @@ function init() {
     mergeSheetIntoState(state, PRELOADED, defaultMembers);
   }
   state.brands = (state.brands || []).map(normalizeBrandVisual);
+  ensureTimeOffBrand(state.brands);
   // Ensure memberDetails always exists
   if (!state.memberDetails) {
     state.memberDetails = {};
@@ -678,6 +711,8 @@ function mergeSheetIntoState(state, PRELOADED, defaultMembers) {
       );
     }
   }
+
+  ensureTimeOffBrand(state.brands);
 }
 
 function assignmentRowsFor(days, members) {
@@ -715,6 +750,8 @@ function rebuildStateFromPreloadedData() {
   if (PRELOADED?.assignments) {
     mergeSheetIntoState(state, PRELOADED, defaultMembers);
   }
+
+  ensureTimeOffBrand(state.brands);
 
   if (!state.memberDetails) {
     state.memberDetails = {};
@@ -808,9 +845,7 @@ function toggleGridLines() {
 }
 
 function getTimeOffBrand() {
-  return state.brands.find((brand) => (brand.name || "").trim().toLowerCase() === "time off")
-    || state.brands.find((brand) => brand.billingCode === "000000")
-    || null;
+  return state?.brands?.find(isTimeOffBrand) || null;
 }
 
 function getAssignedBrandIds() {
@@ -1393,17 +1428,13 @@ function attachEvents() {
   });
 
   timeOffBtn.addEventListener("click", () => {
-    const timeOffBrand = getTimeOffBrand();
-    if (!timeOffBrand) {
-      showToast("Time Off brand was not found", "error");
-      return;
-    }
+    const timeOffBrand = getTimeOffBrand() || ensureTimeOffBrand(state.brands);
 
     selectedBrandId = timeOffBrand.id;
     paintMode = "brand";
     renderPalette();
     updateEraserVisual();
-    saveState();
+    saveState({ brandIds: [timeOffBrand.id] });
   });
 
   clearMonthBtn?.addEventListener("click", async () => {
@@ -2444,8 +2475,8 @@ function updateEraserVisual() {
     timeOffBtn.style.background = timeOffActive ? "var(--time-off-active-bg)" : "var(--time-off-bg)";
     timeOffBtn.style.color = timeOffActive ? "var(--time-off-active-color)" : "var(--time-off-color)";
     timeOffBtn.setAttribute("aria-pressed", timeOffActive ? "true" : "false");
-    timeOffBtn.disabled = !timeOffBrand;
-    timeOffBtn.title = timeOffBrand ? "Time Off" : "Time Off brand not found";
+    timeOffBtn.disabled = false;
+    timeOffBtn.title = "Time Off";
   }
 
   updateSlotCursor();
