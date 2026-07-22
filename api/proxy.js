@@ -358,11 +358,39 @@ function buildBrandRecords(state, existingBrands) {
         id: brand.id,
         legacy_index: legacyIndex,
         name: brand.name || "",
-        color: brand.color || "#CCCCCC",
+        color: normalizePersistedBrandColor(brand.color),
         billing_code: brand.billingCode || null,
         active: true
       };
     });
+}
+
+function normalizePersistedBrandColor(color) {
+  const normalized = String(color || "").trim();
+  if (/^#[0-9a-f]{8}$/i.test(normalized)) return normalized.slice(0, 7);
+  if (/^#[0-9a-f]{6}$/i.test(normalized)) return normalized;
+  return "#CCCCCC";
+}
+
+function includeReferencedBrandsInChanges(state, assignmentSnapshots, existingBrands, changes) {
+  const activeBrandIds = new Set(
+    (existingBrands || [])
+      .filter((brand) => brand?.active !== false)
+      .map((brand) => brand.id)
+  );
+  const localBrandIds = new Set(
+    (state.brands || [])
+      .filter((brand) => brand && typeof brand.id === "string")
+      .map((brand) => brand.id)
+  );
+
+  for (const snapshot of assignmentSnapshots) {
+    for (const value of snapshot.slots || []) {
+      if (!isRealAssignmentValue(value)) continue;
+      if (activeBrandIds.has(value) || !localBrandIds.has(value)) continue;
+      changes.brandIds.add(value);
+    }
+  }
 }
 
 async function saveState(config, state, requestedChanges) {
@@ -401,6 +429,8 @@ async function saveState(config, state, requestedChanges) {
     supabaseRequest(config, "members?select=id,employee_code,name,active"),
     supabaseRequest(config, "brands?select=id,legacy_index,name,color,billing_code,active")
   ]);
+
+  includeReferencedBrandsInChanges(safeState, assignmentSnapshots, existingBrands, changes);
 
   const previousNamesByCurrent = new Map(
     [...changes.memberChanges.values()]

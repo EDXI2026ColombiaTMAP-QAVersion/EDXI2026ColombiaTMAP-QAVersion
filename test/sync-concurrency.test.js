@@ -376,6 +376,26 @@ function createFakeSupabase() {
       return jsonResponse(clone(database.brands));
     }
 
+    if (resource === "brands" && method === "POST") {
+      const rows = JSON.parse(init.body || "[]");
+      let nextLegacyIndex = database.brands.reduce(
+        (max, brand) => Math.max(max, Number(brand.legacy_index) || 0),
+        0
+      ) + 1;
+      const savedRows = rows.map((row) => {
+        const existing = database.brands.find((brand) => brand.id === row.id);
+        const saved = {
+          ...row,
+          legacy_index: existing?.legacy_index ?? row.legacy_index ?? nextLegacyIndex++,
+          active: true
+        };
+        if (existing) Object.assign(existing, saved);
+        else database.brands.push(saved);
+        return clone(saved);
+      });
+      return jsonResponse(savedRows);
+    }
+
     if (resource === "daily_assignments" && method === "POST") {
       if (remainingAssignmentFailures > 0) {
         remainingAssignmentFailures -= 1;
@@ -456,6 +476,40 @@ function initialState() {
     }
   };
 }
+
+test("a referenced local Time Off brand is saved before its assignment", async () => {
+  const fake = createFakeSupabase();
+  const adapter = loadAdapter(fake.fetchImpl);
+  const state = initialState();
+  state.brands.push({
+    id: "time-off",
+    name: "Time Off",
+    color: "#d9d9d996",
+    billingCode: "000000"
+  });
+  state.assignments["2026-07-16"].Ana[0] = "time-off";
+
+  await adapter.saveDirectState(state, {
+    assignmentRows: [{ workDate: "2026-07-16", member: "Ana" }]
+  });
+
+  assert.ok(fake.database.brands.some((brand) => (
+    brand.id === "time-off"
+      && brand.active
+      && brand.color === "#d9d9d9"
+  )));
+  assert.equal(
+    fake.database.assignments.get("2026-07-16|member-ana").slots[0],
+    "time-off"
+  );
+  const metadataWriteIndex = fake.operations.findIndex(
+    (operation) => operation.resource === "brands" && operation.method === "POST"
+  );
+  const assignmentWriteIndex = fake.operations.findIndex(
+    (operation) => operation.resource === "daily_assignments" && operation.method === "POST"
+  );
+  assert.ok(metadataWriteIndex !== -1 && metadataWriteIndex < assignmentWriteIndex);
+});
 
 test("two stale clients preserve changes for different people on the same date", async () => {
   const fake = createFakeSupabase();
