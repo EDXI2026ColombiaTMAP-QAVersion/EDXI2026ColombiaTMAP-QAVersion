@@ -297,7 +297,7 @@ body {
   position: sticky;
   top: 100px;
   z-index: 10;
-  background: #FFFFFF;
+  background: var(--table-bg);
   padding: 10px;
 }
 
