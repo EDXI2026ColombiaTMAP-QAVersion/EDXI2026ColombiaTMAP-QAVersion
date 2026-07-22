@@ -26,6 +26,63 @@ test("browser scripts can load together without redeclaring global constants", (
   });
 });
 
+test("missing optional toolbar buttons do not disable Recurring Schedule", () => {
+  const storage = createMemoryStorage();
+  const context = vm.createContext({
+    localStorage: storage,
+    window: {
+      localStorage: storage,
+      addEventListener() {}
+    },
+    document: {
+      addEventListener() {},
+      getElementById() {
+        return { addEventListener() {} };
+      }
+    }
+  });
+
+  vm.runInContext(
+    `${APP_SOURCE}
+    ;globalThis.__recurringButtonIsConnected = (() => {
+      const element = { addEventListener() {} };
+      const recurringListeners = new Map();
+      const recurringElement = {
+        addEventListener(type, handler) { recurringListeners.set(type, handler); }
+      };
+
+      toggleTotalsBtn = element;
+      toggleLegendBtn = element;
+      themeToggleBtn = element;
+      gridToggleBtn = element;
+      memberTotals = element;
+      eraserBtn = element;
+      timeOffBtn = element;
+      clearMonthBtn = null;
+      addMemberBtn = null;
+      removeMemberBtn = null;
+      addBrandBtn = element;
+      importBrandsBtn = null;
+      importBrandsOk = element;
+      brandSearchInput = element;
+      exportExcelBtn = element;
+      exportAvailabilityBtn = element;
+      refreshDataBtn = element;
+      importJsonBtn = null;
+      importJsonFileInput = element;
+      recurringBtn = recurringElement;
+      scheduleBody = element;
+
+      attachEvents();
+      return recurringListeners.has("click");
+    })();`,
+    context,
+    { filename: APP_PATH }
+  );
+
+  assert.equal(context.__recurringButtonIsConnected, true);
+});
+
 test("07:00, 07:30, 17:00 and 17:30 share the fringe treatment", () => {
   const storage = createMemoryStorage();
   const context = vm.createContext({
@@ -139,6 +196,97 @@ test("Time Off always uses the configured translucent gray", () => {
     }).color,
     "#d9d9d996"
   );
+});
+
+test("the last Friday afternoon of every month is blocked as Time Off", () => {
+  const storage = createMemoryStorage();
+  const context = vm.createContext({
+    localStorage: storage,
+    window: { localStorage: storage }
+  });
+
+  vm.runInContext(
+    `${APP_SOURCE}\n;globalThis.__monthlyTimeOffForTests = isMonthlyTimeOffSlot;`,
+    context,
+    { filename: APP_PATH }
+  );
+
+  assert.equal(context.__monthlyTimeOffForTests("2026-08-28", 13), false); // 13:30, lunch
+  assert.equal(context.__monthlyTimeOffForTests("2026-08-28", 14), true);  // 14:00
+  assert.equal(context.__monthlyTimeOffForTests("2026-08-28", 21), true);  // 17:30
+  assert.equal(context.__monthlyTimeOffForTests("2026-08-21", 14), false);
+  assert.equal(context.__monthlyTimeOffForTests("2026-07-31", 14), true);
+});
+
+test("report exports use only the month selected by the user", () => {
+  const storage = createMemoryStorage();
+  const context = vm.createContext({
+    localStorage: storage,
+    window: { localStorage: storage }
+  });
+
+  vm.runInContext(
+    `${APP_SOURCE}
+    ;globalThis.__monthExportForTests = {
+      months: MONTHS.map(({ year, month, label }) => ({ year, month, label })),
+      snapshot: getMonthExportSnapshot,
+      assignmentDays: getAssignmentDaysForMonth
+    };`,
+    context,
+    { filename: APP_PATH }
+  );
+
+  const months = JSON.parse(JSON.stringify(context.__monthExportForTests.months));
+  const septemberIndex = months.findIndex(({ year, month }) => year === 2026 && month === 8);
+  const september = context.__monthExportForTests.snapshot(septemberIndex);
+  const days = context.__monthExportForTests.assignmentDays({
+    _config: {},
+    "2026-08-31": {},
+    "2026-09-01": {},
+    "2026-09-30": {},
+    "2026-10-01": {}
+  }, september);
+
+  assert.equal(september.label, "Sep 2026");
+  assert.deepEqual(Array.from(days), ["2026-09-01", "2026-09-30"]);
+  assert.ok(
+    Array.from(september.weeks)
+      .flatMap((week) => Array.from(week))
+      .filter((day) => !day.foreign)
+      .every((day) => day.key.startsWith("2026-09-"))
+  );
+});
+
+test("recurring Lunch replaces the previous Lunch time", () => {
+  const storage = createMemoryStorage();
+  const context = vm.createContext({
+    localStorage: storage,
+    window: { localStorage: storage }
+  });
+
+  vm.runInContext(
+    `${APP_SOURCE}\n;globalThis.__configureLunchForTests = configureLunchSlots;`,
+    context,
+    { filename: APP_PATH }
+  );
+
+  const memberSlots = Array(22).fill(null);
+  memberSlots[12] = "LUNCH";
+  memberSlots[13] = "LUNCH";
+  memberSlots[10] = "brand-1";
+
+  const configuredSlots = context.__configureLunchForTests(
+    memberSlots,
+    10,
+    12,
+    "2026-09-10"
+  );
+
+  assert.equal(configuredSlots, 2);
+  assert.equal(memberSlots[10], "LUNCH");
+  assert.equal(memberSlots[11], "LUNCH");
+  assert.equal(memberSlots[12], null);
+  assert.equal(memberSlots[13], null);
 });
 
 function clone(value) {

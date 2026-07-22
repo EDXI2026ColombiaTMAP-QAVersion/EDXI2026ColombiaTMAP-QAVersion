@@ -72,13 +72,13 @@ function resolveDefaults() {
 
 // Month configuration: [year, monthIndex (0-based), label]
 const MONTHS = [
-  { year: 2026, month: 0, label: "Jan 2026" },
-  { year: 2026, month: 1, label: "Feb 2026" },
-  { year: 2026, month: 2, label: "Mar 2026" },
-  { year: 2026, month: 3, label: "Apr 2026" },
-  { year: 2026, month: 4, label: "May 2026" },
-  { year: 2026, month: 5, label: "Jun 2026" },
-  { year: 2026, month: 6, label: "Jul 2026" },
+  // { year: 2026, month: 0, label: "Jan 2026" },
+  // { year: 2026, month: 1, label: "Feb 2026" },
+  // { year: 2026, month: 2, label: "Mar 2026" },
+  // { year: 2026, month: 3, label: "Apr 2026" },
+  // { year: 2026, month: 4, label: "May 2026" },
+  // { year: 2026, month: 5, label: "Jun 2026" },
+  // { year: 2026, month: 6, label: "Jul 2026" },
   { year: 2026, month: 7, label: "Aug 2026" },
   { year: 2026, month: 8, label: "Sep 2026" },
   { year: 2026, month: 9, label: "Oct 2026" },
@@ -87,19 +87,8 @@ const MONTHS = [
 ];
 
 function getDefaultMonthIndex() {
-  const today = new Date();
-  const exactIdx = MONTHS.findIndex((entry) => entry.year === today.getFullYear() && entry.month === today.getMonth());
-  if (exactIdx !== -1) return exactIdx;
-
-  const todayMonthStart = new Date(today.getFullYear(), today.getMonth(), 1).getTime();
-  if (todayMonthStart < new Date(MONTHS[0].year, MONTHS[0].month, 1).getTime()) return 0;
-
-  for (let i = MONTHS.length - 1; i >= 0; i -= 1) {
-    const monthStart = new Date(MONTHS[i].year, MONTHS[i].month, 1).getTime();
-    if (todayMonthStart >= monthStart) return i;
-  }
-
-  return 0;
+  const augustIndex = MONTHS.findIndex((entry) => entry.year === 2026 && entry.month === 7);
+  return augustIndex !== -1 ? augustIndex : 0;
 }
 
 let currentMonthIdx = getDefaultMonthIndex();
@@ -127,6 +116,19 @@ const COLOMBIAN_HOLIDAYS = {
 
 function isHoliday(dateKey) {
   return COLOMBIAN_HOLIDAYS.hasOwnProperty(dateKey);
+}
+
+function isLastFridayOfMonth(dateKey) {
+  const [year, month, day] = String(dateKey).split("-").map(Number);
+  if (!year || !month || !day) return false;
+
+  const date = new Date(year, month - 1, day);
+  return date.getDay() === 5 && new Date(year, month - 1, day + 7).getMonth() !== month - 1;
+}
+
+function isMonthlyTimeOffSlot(dateKey, slotIndex) {
+  const slot = slots?.[slotIndex];
+  return isLastFridayOfMonth(dateKey) && Boolean(slot) && slot.hour >= 14;
 }
 
 const slots = buildSlots();
@@ -433,6 +435,29 @@ function updateScheduleTitle() {
   if (title) {
     title.textContent = `Timing Map - ${MONTHS[currentMonthIdx].label}`;
   }
+}
+
+function getMonthExportSnapshot(monthIndex = currentMonthIdx) {
+  const selectedMonth = MONTHS[monthIndex];
+  const monthWeekdays = buildMonthWeekdays(selectedMonth.year, selectedMonth.month);
+
+  return {
+    year: selectedMonth.year,
+    month: selectedMonth.month,
+    label: selectedMonth.label,
+    weeks: chunkWeekdays(monthWeekdays, 5)
+  };
+}
+
+function getAssignmentDaysForMonth(assignments, selectedMonth) {
+  return Object.keys(assignments || {})
+    .filter((dateKey) => {
+      const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateKey);
+      return Boolean(match)
+        && Number(match[1]) === selectedMonth.year
+        && Number(match[2]) === selectedMonth.month + 1;
+    })
+    .sort();
 }
 
 function buildSlots() {
@@ -891,7 +916,9 @@ function renderTable() {
         th.style.background = "var(--holiday-bg)";
         th.title = COLOMBIAN_HOLIDAYS[day.key];
       } else {
-        th.textContent = day.label;
+        const hasMonthlyTimeOff = !day.foreign && isLastFridayOfMonth(day.key);
+        th.textContent = hasMonthlyTimeOff ? `${day.label} (PM Time Off)` : day.label;
+        if (hasMonthlyTimeOff) th.title = "Monthly Time Off from 14:00";
         if (day.foreign) th.classList.add("foreign-day");
       }
       dayRow.appendChild(th);
@@ -920,6 +947,11 @@ function renderTable() {
           th.style.background = "var(--holiday-bg)";
         }
         else if (weekDays[i].foreign) th.style.background = "var(--foreign-bg)";
+        else if (isMonthlyTimeOffSlot(weekDays[i].key, slot.index)) {
+          th.classList.add("monthly-time-off");
+          th.style.background = TIME_OFF_COLOR;
+          th.title = "Monthly Time Off";
+        }
         else if (slot.isLunch) th.style.background = "var(--lunch-header-bg)";
         else if (slot.isFringe) th.style.background = "var(--foreign-bg)";
         slotRow.appendChild(th);
@@ -979,6 +1011,12 @@ function renderTable() {
             td.style.cursor = "not-allowed";
             td.title = `Holiday: ${COLOMBIAN_HOLIDAYS[day.key]}`;
             td.textContent = "";
+          } else if (isMonthlyTimeOffSlot(day.key, slot.index)) {
+            td.classList.add("monthly-time-off");
+            td.style.background = TIME_OFF_COLOR;
+            td.style.cursor = "not-allowed";
+            td.title = `Time Off (${slot.label}-${getSlotEndLabel(slot.index)})`;
+            td.setAttribute("aria-label", "Monthly Time Off");
           } else if (state.assignments[day.key][member][slot.index] === "LUNCH") {
             td.classList.add("lunch");
             td.textContent = "";
@@ -1122,6 +1160,7 @@ function renderTotals() {
       const arr = state.assignments[day.key]?.[member];
       if (!arr) continue;
       for (let i = 0; i < arr.length; i += 1) {
+        if (isMonthlyTimeOffSlot(day.key, i)) continue;
         const value = arr[i];
         if (value === "LUNCH" || !value) continue;
         if (!shouldCountBrandHours(value)) continue; // Skip brands with billing code 000000
@@ -1200,6 +1239,7 @@ function getMemberWorkSchedule(member) {
 
     const blocks = [];
     for (let i = 0; i < slotsForDay.length; i += 1) {
+      if (isMonthlyTimeOffSlot(day.key, i)) continue;
       const value = slotsForDay[i];
       if (value === "LUNCH" || !value || !shouldCountBrandHours(value)) continue;
 
@@ -1207,7 +1247,7 @@ function getMemberWorkSchedule(member) {
       let endIdx = i;
       while (endIdx + 1 < slotsForDay.length) {
         const nextValue = slotsForDay[endIdx + 1];
-        if (nextValue !== value || nextValue === "LUNCH" || !nextValue || !shouldCountBrandHours(nextValue)) break;
+        if (isMonthlyTimeOffSlot(day.key, endIdx + 1) || nextValue !== value || nextValue === "LUNCH" || !nextValue || !shouldCountBrandHours(nextValue)) break;
         endIdx += 1;
       }
 
@@ -1243,6 +1283,7 @@ function memberMonthHours(member) {
     const arr = state.assignments[day.key]?.[member];
     if (!arr) continue;
     for (let i = 0; i < arr.length; i += 1) {
+      if (isMonthlyTimeOffSlot(day.key, i)) continue;
       if (arr[i] === "LUNCH" || !arr[i]) continue;
       if (!shouldCountBrandHours(arr[i])) continue; // Skip brands with billing code 000000
       hh += 1;
@@ -1259,6 +1300,7 @@ function memberWeekHours(member, weekIndex) {
     const arr = state.assignments[day.key]?.[member];
     if (!arr) continue;
     for (let i = 0; i < arr.length; i += 1) {
+      if (isMonthlyTimeOffSlot(day.key, i)) continue;
       if (arr[i] === "LUNCH" || !arr[i]) continue;
       if (!shouldCountBrandHours(arr[i])) continue; // Skip brands with billing code 000000
       hh += 1;
@@ -1270,6 +1312,7 @@ function memberWeekHours(member, weekIndex) {
 let _lastPaintSyncPromise = null;
 
 function applyToCell(member, dayKey, slotIndex) {
+  if (isMonthlyTimeOffSlot(dayKey, slotIndex)) return;
   if (state.assignments[dayKey][member][slotIndex] === "LUNCH") return;
   state.assignments[dayKey][member][slotIndex] = paintMode === "erase" ? null : selectedBrandId;
   _lastPaintSyncPromise = saveState({
@@ -1306,6 +1349,10 @@ function updateRenderedMemberHours(member) {
 }
 
 function attachEvents() {
+  // Register the primary scheduling action first so optional toolbar controls
+  // cannot prevent the modal from being connected.
+  recurringBtn?.addEventListener("click", openRecurringModal);
+
   toggleTotalsBtn.addEventListener("click", () => {
     const collapsed = !totalsPanel.classList.contains("collapsed");
     applyTotalsCollapse(collapsed);
@@ -1359,7 +1406,7 @@ function attachEvents() {
     saveState();
   });
 
-  clearMonthBtn.addEventListener("click", async () => {
+  clearMonthBtn?.addEventListener("click", async () => {
     if (!confirm(`Clear all assignments for ${MONTHS[currentMonthIdx].label}?`)) return;
     const clearedDays = [];
     for (const day of weekdays) {
@@ -1377,7 +1424,7 @@ function attachEvents() {
     if (ok) showToast(`All assignments cleared for ${MONTHS[currentMonthIdx].label}`, "success");
   });
 
-  addMemberBtn.addEventListener("click", async () => {
+  addMemberBtn?.addEventListener("click", async () => {
     const result = await openMemberModal();
     if (!result) return;
     const clean = result.name;
@@ -1399,7 +1446,7 @@ function attachEvents() {
     if (ok) showToast(`Team member "${clean}" added`, "success");
   });
 
-  removeMemberBtn.addEventListener("click", async () => {
+  removeMemberBtn?.addEventListener("click", async () => {
     if (state.members.length === 0) {
       alert("No team members to remove.");
       return;
@@ -1455,7 +1502,7 @@ function attachEvents() {
     if (ok) showToast(`Brand "${result.name}" added`, "success");
   });
 
-  importBrandsBtn.addEventListener("click", () => {
+  importBrandsBtn?.addEventListener("click", () => {
     importBrandsInput.value = "";
     importBrandsModal.hidden = false;
     importBrandsInput.focus();
@@ -1519,7 +1566,7 @@ function attachEvents() {
     await refreshFromCloud();
   });
 
-  importJsonBtn.addEventListener("click", () => {
+  importJsonBtn?.addEventListener("click", () => {
     importJsonFileInput.value = "";
     importJsonFileInput.click();
   });
@@ -1536,17 +1583,13 @@ function attachEvents() {
     }
   });
 
-  recurringBtn.addEventListener("click", openRecurringModal);
-
-
-
   scheduleBody.addEventListener("mousedown", (event) => {
     // Painting is exclusive to the primary (left) mouse button. A secondary
     // click is reserved for the Lunch context menu below.
     if (event.button !== 0 || event.ctrlKey) return;
     const cell = event.target.closest(".slot-cell");
     updateHoverGuides(cell);
-    if (!cell || cell.classList.contains("lunch") || cell.classList.contains("foreign") || cell.classList.contains("holiday")) return;
+    if (!cell || cell.classList.contains("lunch") || cell.classList.contains("foreign") || cell.classList.contains("holiday") || cell.classList.contains("monthly-time-off")) return;
     isMouseDown = true;
     const member = cell.dataset.member;
     activePaintMember = member;
@@ -1561,7 +1604,7 @@ function attachEvents() {
     const cell = event.target.closest(".slot-cell");
     updateHoverGuides(cell);
     if (!isMouseDown) return;
-    if (!cell || cell.classList.contains("lunch") || cell.classList.contains("foreign") || cell.classList.contains("holiday")) return;
+    if (!cell || cell.classList.contains("lunch") || cell.classList.contains("foreign") || cell.classList.contains("holiday") || cell.classList.contains("monthly-time-off")) return;
     const member = cell.dataset.member;
     if (member !== activePaintMember) return;
     const dayKey = cell.dataset.day;
@@ -1601,7 +1644,7 @@ function attachEvents() {
 
   scheduleBody.addEventListener("contextmenu", (event) => {
     const cell = event.target.closest(".slot-cell");
-    if (!cell || cell.classList.contains("foreign") || cell.classList.contains("holiday")) return;
+    if (!cell || cell.classList.contains("foreign") || cell.classList.contains("holiday") || cell.classList.contains("monthly-time-off")) return;
     event.preventDefault();
     const member = cell.dataset.member;
     const dayKey = cell.dataset.day;
@@ -1786,6 +1829,10 @@ async function exportScheduleToNewExcel() {
     exportExcelBtn.disabled = true;
     exportExcelBtn.textContent = "Exporting...";
 
+    // Capture the visible month before the first await so changing tabs while
+    // the workbook is being generated cannot change the export midway through.
+    const exportMonth = getMonthExportSnapshot();
+
     const workbook = await window.XlsxPopulate.fromBlankAsync();
     const sheet = workbook.sheet(0);
     sheet.name("Schedule");
@@ -1836,10 +1883,8 @@ async function exportScheduleToNewExcel() {
       return `${parseInt(month)}/${parseInt(day)}/${year}`;
     };
 
-    // Sort days chronologically
-    const sortedDays = Object.keys(state.assignments)
-      .filter(key => key !== '_config')
-      .sort();
+    // Export only assignments from the month currently visible to the user.
+    const sortedDays = getAssignmentDaysForMonth(state.assignments, exportMonth);
 
     // Iterate through members (sorted)
     for (const member of state.members) {
@@ -1858,6 +1903,11 @@ async function exportScheduleToNewExcel() {
         let i = 0;
         while (i < memberSlots.length) {
           const brandId = memberSlots[i];
+
+          if (isMonthlyTimeOffSlot(dayKey, i)) {
+            i++;
+            continue;
+          }
           
           // Skip empty slots and lunch
           if (!brandId || brandId === "LUNCH" || brandId === ".") {
@@ -1881,7 +1931,7 @@ async function exportScheduleToNewExcel() {
           let startSlot = i;
           let endSlot = i;
           
-          while (endSlot + 1 < memberSlots.length && memberSlots[endSlot + 1] === brandId) {
+          while (endSlot + 1 < memberSlots.length && !isMonthlyTimeOffSlot(dayKey, endSlot + 1) && memberSlots[endSlot + 1] === brandId) {
             endSlot++;
           }
           
@@ -1908,7 +1958,8 @@ async function exportScheduleToNewExcel() {
 
     // Save and download
     const out = await workbook.outputAsync();
-    downloadBlob(out, `DXI_Timing_Map_${todayStamp()}.xlsx`);
+    const fileMonthLabel = exportMonth.label.replace(/\s+/g, "_");
+    downloadBlob(out, `DXI_Timing_Map_${fileMonthLabel}_${todayStamp()}.xlsx`);
     showToast("Excel exported successfully");
   } catch (error) {
     console.error(error);
@@ -1940,6 +1991,7 @@ function getAvailableHoursForMemberDay(member, day) {
   let pm = 0;
 
   for (let i = 0; i < memberSlots.length; i += 1) {
+    if (isMonthlyTimeOffSlot(day.key, i)) continue;
     const value = memberSlots[i];
     if (!(value === null || value === undefined || value === ".")) continue;
 
@@ -1956,9 +2008,13 @@ async function exportAvailabilityToExcel() {
     exportAvailabilityBtn.disabled = true;
     exportAvailabilityBtn.textContent = "Exporting...";
 
+    // Use one snapshot for the full report, even if the user switches tabs
+    // while the asynchronous workbook generation is still running.
+    const exportMonth = getMonthExportSnapshot();
+
     const workbook = await window.XlsxPopulate.fromBlankAsync();
     const sheet = workbook.sheet(0);
-    const monthLabel = MONTHS[currentMonthIdx].label;
+    const monthLabel = exportMonth.label;
     const sheetName = `Summary ${monthLabel} By Person`;
     sheet.name(sheetName.slice(0, 31));
 
@@ -1971,7 +2027,7 @@ async function exportAvailabilityToExcel() {
     let monthGrandTotal = 0;
 
     sheet.cell("A1").value(title).style("bold", true).style("fontSize", 14).style("fontColor", "FFFFFF").style("fill", "020028");
-    sheet.cell("A2").value("Available hours are based on unassigned white slots (#FFFFFF).").style("italic", true).style("fontColor", "6B7280");
+    sheet.cell("A2").value("");
 
     sheet.cell(`A${headerRowDay}`).value("Week").style("bold", true).style("fill", "D3D3D3");
     sheet.cell(`B${headerRowDay}`).value("Employee").style("bold", true).style("fill", "D3D3D3");
@@ -1997,8 +2053,8 @@ async function exportAvailabilityToExcel() {
     }
     sheet.column("M").width(12);
 
-    for (let weekIndex = 0; weekIndex < weeks.length; weekIndex += 1) {
-      const weekDays = weeks[weekIndex];
+    for (let weekIndex = 0; weekIndex < exportMonth.weeks.length; weekIndex += 1) {
+      const weekDays = exportMonth.weeks[weekIndex];
       const weekLabel = `Week ${weekIndex + 1}`;
       const weekRows = [...state.members]
         .sort(compareAvailabilityMemberOrder)
@@ -2408,6 +2464,23 @@ function getSlotEndLabel(slotIndex) {
   return toLabel(endHour, endMinute);
 }
 
+function configureLunchSlots(memberSlots, startIdx, endExclusiveIdx, dayKey) {
+  if (!Array.isArray(memberSlots)) return 0;
+
+  for (let i = 0; i < memberSlots.length; i += 1) {
+    if (memberSlots[i] === "LUNCH") memberSlots[i] = null;
+  }
+
+  let configuredSlots = 0;
+  for (let i = startIdx; i < endExclusiveIdx && i < memberSlots.length; i += 1) {
+    if (isMonthlyTimeOffSlot(dayKey, i)) continue;
+    memberSlots[i] = "LUNCH";
+    configuredSlots += 1;
+  }
+
+  return configuredSlots;
+}
+
 /* ── Recurring Schedule Modal ── */
 function openRecurringModal() {
   const modal = document.getElementById("recurringModal");
@@ -2415,6 +2488,8 @@ function openRecurringModal() {
   const brandSel = document.getElementById("recBrand");
   const startSel = document.getElementById("recStart");
   const endSel = document.getElementById("recEnd");
+  const lunchStartSel = document.getElementById("recLunchStart");
+  const lunchEndSel = document.getElementById("recLunchEnd");
   const scopeSel = document.getElementById("recScope");
   const weekPicker = document.getElementById("recWeekPicker");
   const weekLabel = weekPicker.querySelector(".modal-label");
@@ -2433,7 +2508,11 @@ function openRecurringModal() {
   if (weekSel) weekSel.hidden = true;
 
   // Populate members
-  memberSel.innerHTML = state.members.map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join("");
+  memberSel.innerHTML = [
+    '<option value="">-- None --</option>',
+    ...state.members.map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`)
+  ].join("");
+  memberSel.value = "";
 
   // Populate brands
   brandSel.innerHTML = state.brands
@@ -2451,6 +2530,22 @@ function openRecurringModal() {
     .join("");
   startSel.innerHTML = startTimeOptions;
   endSel.innerHTML = endTimeOptions;
+  lunchStartSel.innerHTML = `<option value="">---</option>${startTimeOptions}`;
+  lunchEndSel.innerHTML = `<option value="">---</option>${endTimeOptions}`;
+  lunchStartSel.value = "";
+  lunchEndSel.value = "";
+
+  lunchStartSel.onchange = () => {
+    if (lunchStartSel.value === "") {
+      lunchEndSel.value = "";
+      return;
+    }
+
+    const lunchStartIdx = Number(lunchStartSel.value);
+    if (lunchEndSel.value === "" || Number(lunchEndSel.value) <= lunchStartIdx) {
+      lunchEndSel.value = String(Math.min(lunchStartIdx + 2, slots.length));
+    }
+  };
   // Default start to 8:00
   const defaultStartSlot = slots.find((slot) => slot.label === "8:00");
   if (defaultStartSlot) {
@@ -2511,10 +2606,31 @@ function openRecurringModal() {
     const brandId = brandSel.value;
     const startIdx = Number(startSel.value);
     const endExclusiveIdx = Number(endSel.value);
+    const hasLunchStart = lunchStartSel.value !== "";
+    const hasLunchEnd = lunchEndSel.value !== "";
+    const shouldConfigureLunch = hasLunchStart && hasLunchEnd;
+    const lunchStartIdx = shouldConfigureLunch ? Number(lunchStartSel.value) : null;
+    const lunchEndExclusiveIdx = shouldConfigureLunch ? Number(lunchEndSel.value) : null;
     const brandName = state.brands.find((b) => b.id === brandId)?.name || "Selected brand";
+
+    if (!member) {
+      alert("Please select a team member.");
+      memberSel.focus();
+      return;
+    }
 
     if (startIdx >= endExclusiveIdx) {
       alert("End time must be after start time.");
+      return;
+    }
+
+    if (hasLunchStart !== hasLunchEnd) {
+      alert("Please select both Lunch Start Time and Lunch End Time, or leave both as ---.");
+      return;
+    }
+
+    if (shouldConfigureLunch && lunchStartIdx >= lunchEndExclusiveIdx) {
+      alert("Lunch End Time must be after Lunch Start Time.");
       return;
     }
 
@@ -2543,25 +2659,53 @@ function openRecurringModal() {
 
     const slotIndexesInRange = [];
     for (let i = startIdx; i < endExclusiveIdx; i += 1) {
-      if (lunchSlots.has(i)) continue;
       slotIndexesInRange.push(i);
     }
 
-    if (!slotIndexesInRange.length) {
-      alert("The selected time range only includes lunch slots.");
+    const configuredLunchSlotIndexes = new Set();
+    if (shouldConfigureLunch) {
+      for (let i = lunchStartIdx; i < lunchEndExclusiveIdx; i += 1) {
+        configuredLunchSlotIndexes.add(i);
+      }
+    }
+
+    const availableSlotsByDay = targetDays.map((dayKey) => (
+      slotIndexesInRange.filter((slotIndex) => {
+        if (isMonthlyTimeOffSlot(dayKey, slotIndex)) return false;
+        if (shouldConfigureLunch) return !configuredLunchSlotIndexes.has(slotIndex);
+        return state.assignments[dayKey]?.[member]?.[slotIndex] !== "LUNCH";
+      })
+    ));
+    const hoursPerRegularDay = Math.max(0, ...availableSlotsByDay.map((daySlots) => daySlots.length * 0.5));
+    const totalHours = availableSlotsByDay.reduce((total, daySlots) => total + daySlots.length * 0.5, 0);
+    if (totalHours === 0) {
+      alert("The selected work time is blocked by Lunch or Monthly Time Off.");
       return;
     }
 
-    const hoursPerDay = slotIndexesInRange.length * 0.5;
-    const totalHours = hoursPerDay * targetDays.length;
+    const totalLunchHours = shouldConfigureLunch
+      ? targetDays.reduce((total, dayKey) => (
+        total + [...configuredLunchSlotIndexes]
+          .filter((slotIndex) => !isMonthlyTimeOffSlot(dayKey, slotIndex)).length * 0.5
+      ), 0)
+      : 0;
+    if (shouldConfigureLunch && totalLunchHours === 0) {
+      alert("The selected Lunch time is blocked by Monthly Time Off.");
+      return;
+    }
+
+    const lunchSummary = shouldConfigureLunch
+      ? `${slots[lunchStartIdx].label} - ${lunchEndSel.options[lunchEndSel.selectedIndex].text}`
+      : "No change";
     const confirmationMessage = [
       "Apply recurring schedule?",
       "",
       `Team Member: ${member}`,
       `Brand: ${brandName}`,
       `Time: ${slots[startIdx].label} - ${endSel.options[endSel.selectedIndex].text}`,
+      `Lunch: ${lunchSummary}`,
       `Days: ${targetDays.length}`,
-      `Hours per day: ${hoursPerDay.toFixed(1)}h`,
+      `Hours per regular day: ${hoursPerRegularDay.toFixed(1)}h`,
       `Total scheduled hours: ${totalHours.toFixed(1)}h`
     ].join("\n");
 
@@ -2569,12 +2713,20 @@ function openRecurringModal() {
       return;
     }
 
-    // Apply brand to slots in range for each target day
+    // Apply work hours and, when requested, replace the existing Lunch time.
     for (const dayKey of targetDays) {
-      if (!state.assignments[dayKey]?.[member]) continue;
+      const memberSlots = state.assignments[dayKey]?.[member];
+      if (!memberSlots) continue;
+
       for (let i = startIdx; i < endExclusiveIdx; i += 1) {
-        if (lunchSlots.has(i)) continue;
-        state.assignments[dayKey][member][i] = brandId;
+        if (isMonthlyTimeOffSlot(dayKey, i)) continue;
+        if (shouldConfigureLunch && configuredLunchSlotIndexes.has(i)) continue;
+        if (!shouldConfigureLunch && memberSlots[i] === "LUNCH") continue;
+        memberSlots[i] = brandId;
+      }
+
+      if (shouldConfigureLunch) {
+        configureLunchSlots(memberSlots, lunchStartIdx, lunchEndExclusiveIdx, dayKey);
       }
     }
 
@@ -2586,7 +2738,7 @@ function openRecurringModal() {
     });
     if (ok) {
       showToast(
-        `${member} scheduled for ${hoursPerDay.toFixed(1)}h/day across ${targetDays.length} day(s)`,
+        `${member} scheduled for ${totalHours.toFixed(1)}h across ${targetDays.length} day(s)${shouldConfigureLunch ? " with Lunch updated" : ""}`,
         "success"
       );
     } else {

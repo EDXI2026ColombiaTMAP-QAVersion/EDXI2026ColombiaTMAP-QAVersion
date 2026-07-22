@@ -122,7 +122,7 @@ body {
   font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
   color: var(--text);
   background: var(--bg);
-  max-width: 2850px;
+  max-width: 3500px;
 }
 
 .topbar {
@@ -294,6 +294,11 @@ body {
   flex-wrap: wrap;
   align-items: center;
   margin-bottom: 8px;
+  position: sticky;
+  top: 100px;
+  z-index: 10;
+  background: #FFFFFF;
+  padding: 10px;
 }
 
 button:disabled,
