@@ -295,7 +295,7 @@ body {
   align-items: center;
   margin-bottom: 8px;
   position: sticky;
-  top: 160px;
+  top: 1%;
   z-index: 10;
   background: var(--table-bg);
   padding: 20px 10px;
