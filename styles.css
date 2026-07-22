@@ -295,10 +295,10 @@ body {
   align-items: center;
   margin-bottom: 8px;
   position: sticky;
-  top: 100px;
+  top: 160px;
   z-index: 10;
   background: var(--table-bg);
-  padding: 10px;
+  padding: 20px 10px;
 }
 
 button:disabled,
