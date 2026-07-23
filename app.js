@@ -35,7 +35,7 @@ const SLOT_DURATION_MINUTES = 30;
 const CORE_DAY_START_MINUTES = 8 * 60;
 const CORE_DAY_END_MINUTES = 17 * 60;
 const APP_LEGACY_SLOT_COUNT = 20;
-const TIME_OFF_COLOR = "#d9d9d996";
+const TIME_OFF_COLOR = "#d9d9d9";
 const TIME_OFF_BRAND_ID = "time-off";
 const UNDO_HISTORY_LIMIT = 50;
 
