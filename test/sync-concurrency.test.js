@@ -174,6 +174,56 @@ test("availability rows are ordered from highest to lowest Grand Total", () => {
   );
 });
 
+test("weekly availability deducts one hour from the first day with the highest availability", () => {
+  const storage = createMemoryStorage();
+  const context = vm.createContext({
+    localStorage: storage,
+    window: { localStorage: storage }
+  });
+
+  vm.runInContext(
+    `${APP_SOURCE}\n;globalThis.__applyWeeklyAvailabilityDeductionForTests = applyWeeklyAvailabilityDeduction;`,
+    context,
+    { filename: APP_PATH }
+  );
+
+  const adjusted = context.__applyWeeklyAvailabilityDeductionForTests([
+    { am: 3, pm: 2, total: 5 },
+    { am: 2, pm: 3, total: 5 },
+    { am: 1, pm: 1, total: 2 }
+  ]);
+
+  assert.deepEqual(
+    adjusted.map((day) => day.total),
+    [4, 5, 2]
+  );
+  assert.equal(adjusted.reduce((sum, day) => sum + day.total, 0), 11);
+});
+
+test("weekly availability never deducts below zero", () => {
+  const storage = createMemoryStorage();
+  const context = vm.createContext({
+    localStorage: storage,
+    window: { localStorage: storage }
+  });
+
+  vm.runInContext(
+    `${APP_SOURCE}\n;globalThis.__applyWeeklyAvailabilityDeductionForTests = applyWeeklyAvailabilityDeduction;`,
+    context,
+    { filename: APP_PATH }
+  );
+
+  const noAvailability = context.__applyWeeklyAvailabilityDeductionForTests([
+    { am: 0, pm: 0, total: 0 }
+  ]);
+  const halfHour = context.__applyWeeklyAvailabilityDeductionForTests([
+    { am: 0, pm: 0.5, total: 0.5 }
+  ]);
+
+  assert.equal(noAvailability[0].total, 0);
+  assert.equal(halfHour[0].total, 0);
+});
+
 test("Time Off always uses the configured translucent gray", () => {
   const storage = createMemoryStorage();
   const context = vm.createContext({

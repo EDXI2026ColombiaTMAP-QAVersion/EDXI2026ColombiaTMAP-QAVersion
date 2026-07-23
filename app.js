@@ -2265,6 +2265,39 @@ function getAvailableHoursForMemberDay(member, day) {
   return { am, pm, total: am + pm };
 }
 
+function applyWeeklyAvailabilityDeduction(dailyValues) {
+  const adjustedValues = dailyValues.map((dayValue) => ({
+    am: Math.max(0, Number(dayValue?.am) || 0),
+    pm: Math.max(0, Number(dayValue?.pm) || 0),
+    total: Math.max(0, (Number(dayValue?.am) || 0) + (Number(dayValue?.pm) || 0))
+  }));
+
+  let maxDayIndex = -1;
+  let maxDayTotal = 0;
+
+  for (let dayIndex = 0; dayIndex < adjustedValues.length; dayIndex += 1) {
+    if (adjustedValues[dayIndex].total > maxDayTotal) {
+      maxDayTotal = adjustedValues[dayIndex].total;
+      maxDayIndex = dayIndex;
+    }
+  }
+
+  if (maxDayIndex === -1) return adjustedValues;
+
+  const maxDay = adjustedValues[maxDayIndex];
+  let remainingDeduction = Math.min(1, maxDay.total);
+  const shiftsByAvailability = maxDay.pm > maxDay.am ? ["pm", "am"] : ["am", "pm"];
+
+  for (const shift of shiftsByAvailability) {
+    const shiftDeduction = Math.min(remainingDeduction, maxDay[shift]);
+    maxDay[shift] -= shiftDeduction;
+    remainingDeduction -= shiftDeduction;
+  }
+
+  maxDay.total = maxDay.am + maxDay.pm;
+  return adjustedValues;
+}
+
 async function exportAvailabilityToExcel() {
   try {
     exportAvailabilityBtn.disabled = true;
@@ -2321,7 +2354,9 @@ async function exportAvailabilityToExcel() {
       const weekRows = [...state.members]
         .sort(compareAvailabilityMemberOrder)
         .map((member) => {
-          const dailyValues = weekDays.map((day) => getAvailableHoursForMemberDay(member, day));
+          const dailyValues = applyWeeklyAvailabilityDeduction(
+            weekDays.map((day) => getAvailableHoursForMemberDay(member, day))
+          );
           const total = dailyValues.reduce((sum, dayValue) => sum + dayValue.total, 0);
           return { member, dailyValues, total };
         })
