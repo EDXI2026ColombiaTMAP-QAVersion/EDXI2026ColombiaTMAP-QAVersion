@@ -37,6 +37,7 @@ const CORE_DAY_END_MINUTES = 17 * 60;
 const APP_LEGACY_SLOT_COUNT = 20;
 const TIME_OFF_COLOR = "#d9d9d996";
 const TIME_OFF_BRAND_ID = "time-off";
+const UNDO_HISTORY_LIMIT = 50;
 
 const fallbackColors = ["#2D6A4F", "#1D3557", "#8F2D56", "#CA6702", "#6A4C93", "#264653", "#386641", "#9D4EDD"];
 const expandedMemberTotals = new Set(readStoredStringArray(MEMBER_TOTALS_EXPANDED_KEY));
@@ -178,8 +179,10 @@ let selectedBrandId = null;
 let paintMode = "brand";
 let isMouseDown = false;
 let activePaintMember = null;
+let activePaintUndoAction = null;
 let tableResizeObserver = null;
 let activeHoverGuides = { row: null };
+const undoHistory = [];
 
 // DOM elements - initialized in init()
 let layoutMain;
@@ -526,6 +529,70 @@ function createEmptyAssignmentRow() {
   );
 }
 
+function getSlotStartMinutes(slotIndex) {
+  const slot = slots[slotIndex];
+  return slot ? slot.hour * 60 + slot.minute : null;
+}
+
+function isEarlyArrivalSlot(slotIndex) {
+  const slotMinutes = getSlotStartMinutes(slotIndex);
+  return slotMinutes !== null && slotMinutes < CORE_DAY_START_MINUTES;
+}
+
+function isAutomaticShiftWorkValue(value, timeOffBrandId) {
+  return Boolean(value) && value !== "LUNCH" && value !== timeOffBrandId;
+}
+
+function reconcileAutomaticTimeOff(memberSlots, timeOffBrandId, dayKey = "") {
+  if (!Array.isArray(memberSlots) || !timeOffBrandId) return [];
+
+  const earliestArrivalIndex = memberSlots.findIndex((value, index) => (
+    isEarlyArrivalSlot(index)
+    && isAutomaticShiftWorkValue(value, timeOffBrandId)
+  ));
+  const earliestAutomaticExitMinutes =
+    CORE_DAY_END_MINUTES - (CORE_DAY_START_MINUTES - (SLOT_START_HOUR * 60 + SLOT_START_MINUTE));
+  const changedSlotIndexes = [];
+
+  // Remove the previous automatic result first so changing or deleting the
+  // early arrival also moves (or removes) the Time Off block.
+  for (let index = 0; index < memberSlots.length; index += 1) {
+    const slotMinutes = getSlotStartMinutes(index);
+    if (
+      slotMinutes !== null
+      && slotMinutes >= earliestAutomaticExitMinutes
+      && memberSlots[index] === timeOffBrandId
+      && !isMonthlyTimeOffSlot(dayKey, index)
+    ) {
+      memberSlots[index] = null;
+      changedSlotIndexes.push(index);
+    }
+  }
+
+  if (earliestArrivalIndex === -1) return changedSlotIndexes;
+
+  const arrivalMinutes = getSlotStartMinutes(earliestArrivalIndex);
+  const exitMinutes = CORE_DAY_END_MINUTES - (CORE_DAY_START_MINUTES - arrivalMinutes);
+
+  for (let index = 0; index < memberSlots.length; index += 1) {
+    const slotMinutes = getSlotStartMinutes(index);
+    if (
+      slotMinutes === null
+      || slotMinutes < exitMinutes
+      || memberSlots[index] === "LUNCH"
+      || isMonthlyTimeOffSlot(dayKey, index)
+    ) {
+      continue;
+    }
+    if (memberSlots[index] !== timeOffBrandId) {
+      memberSlots[index] = timeOffBrandId;
+      changedSlotIndexes.push(index);
+    }
+  }
+
+  return [...new Set(changedSlotIndexes)];
+}
+
 function normalizeAssignmentSlots(values) {
   if (!Array.isArray(values) || values.length === 0) {
     return createEmptyAssignmentRow();
@@ -731,6 +798,116 @@ function assignmentRowsFor(days, members) {
   return rows;
 }
 
+function createAssignmentUndoAction(label) {
+  return {
+    label,
+    rows: new Map()
+  };
+}
+
+function assignmentUndoRowKey(dayKey, member) {
+  return JSON.stringify([dayKey, member]);
+}
+
+function captureAssignmentUndoRow(action, dayKey, member) {
+  if (!action || !dayKey || !member) return;
+
+  const row = state?.assignments?.[dayKey]?.[member];
+  if (!Array.isArray(row)) return;
+
+  const key = assignmentUndoRowKey(dayKey, member);
+  if (!action.rows.has(key)) {
+    action.rows.set(key, {
+      dayKey,
+      member,
+      slots: [...row]
+    });
+  }
+}
+
+function assignmentRowsAreEqual(left, right) {
+  return Array.isArray(left)
+    && Array.isArray(right)
+    && left.length === right.length
+    && left.every((value, index) => value === right[index]);
+}
+
+function commitAssignmentUndoAction(action) {
+  if (!action) return false;
+
+  for (const [key, row] of action.rows) {
+    const currentRow = state?.assignments?.[row.dayKey]?.[row.member];
+    if (assignmentRowsAreEqual(row.slots, currentRow)) {
+      action.rows.delete(key);
+    }
+  }
+
+  if (action.rows.size === 0) return false;
+
+  undoHistory.push(action);
+  if (undoHistory.length > UNDO_HISTORY_LIMIT) {
+    undoHistory.splice(0, undoHistory.length - UNDO_HISTORY_LIMIT);
+  }
+  return true;
+}
+
+function restoreAssignmentUndoAction(action) {
+  const changedRows = [];
+  if (!action) return changedRows;
+
+  for (const row of action.rows.values()) {
+    if (!state.assignments[row.dayKey]) {
+      state.assignments[row.dayKey] = {};
+    }
+    state.assignments[row.dayKey][row.member] = [...row.slots];
+    changedRows.push(...assignmentRowsFor(row.dayKey, row.member));
+  }
+
+  return changedRows;
+}
+
+function clearUndoHistory() {
+  undoHistory.length = 0;
+  activePaintUndoAction = null;
+}
+
+function isEditableUndoTarget(target) {
+  if (!target) return false;
+  if (target.isContentEditable) return true;
+  return Boolean(target.closest?.("input, textarea, select, [contenteditable=''], [contenteditable='true']"));
+}
+
+function undoLatestChange() {
+  const action = undoHistory.pop();
+  if (!action) return false;
+
+  const changedRows = restoreAssignmentUndoAction(action);
+  renderTable();
+  renderTotals();
+  const syncPromise = saveState({ assignmentRows: changedRows });
+
+  showToast(`Change undone: ${action.label}`, "success");
+  Promise.resolve(syncPromise)
+    .then((ok) => {
+      if (!ok) console.warn("El cambio se deshizo localmente y su sincronización se reintentará automáticamente.");
+    })
+    .catch((error) => console.error("Error sincronizando el cambio deshecho:", error));
+
+  return true;
+}
+
+function handleUndoShortcut(event) {
+  const isUndo = (event.ctrlKey || event.metaKey)
+    && !event.altKey
+    && !event.shiftKey
+    && String(event.key).toLowerCase() === "z";
+
+  if (!isUndo || isEditableUndoTarget(event.target) || undoHistory.length === 0) return;
+
+  event.preventDefault();
+  undoLatestChange();
+}
+
 function saveState(changes = {}) {
   state.selectedBrandId = selectedBrandId;
   safeStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -762,6 +939,7 @@ function rebuildStateFromPreloadedData() {
   }
   state.selectedBrandId = selectedBrandId;
   safeStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  clearUndoHistory();
 }
 
 async function refreshFromCloud() {
@@ -1347,12 +1525,48 @@ function memberWeekHours(member, weekIndex) {
 let _lastPaintSyncPromise = null;
 
 function applyToCell(member, dayKey, slotIndex) {
-  if (isMonthlyTimeOffSlot(dayKey, slotIndex)) return;
-  if (state.assignments[dayKey][member][slotIndex] === "LUNCH") return;
-  state.assignments[dayKey][member][slotIndex] = paintMode === "erase" ? null : selectedBrandId;
+  if (isMonthlyTimeOffSlot(dayKey, slotIndex)) return [];
+  if (state.assignments[dayKey][member][slotIndex] === "LUNCH") return [];
+  captureAssignmentUndoRow(activePaintUndoAction, dayKey, member);
+  const memberSlots = state.assignments[dayKey][member];
+  const previousValue = memberSlots[slotIndex];
+  memberSlots[slotIndex] = paintMode === "erase" ? null : selectedBrandId;
+  const changedSlotIndexes = [slotIndex];
+
+  if (isEarlyArrivalSlot(slotIndex)) {
+    const timeOffBrand = getTimeOffBrand() || ensureTimeOffBrand(state.brands);
+    if (
+      isAutomaticShiftWorkValue(previousValue, timeOffBrand?.id)
+      || isAutomaticShiftWorkValue(memberSlots[slotIndex], timeOffBrand?.id)
+    ) {
+      changedSlotIndexes.push(
+        ...reconcileAutomaticTimeOff(memberSlots, timeOffBrand?.id, dayKey)
+      );
+    }
+  }
+
   _lastPaintSyncPromise = saveState({
     assignmentRows: assignmentRowsFor(dayKey, member)
   });
+  return [...new Set(changedSlotIndexes)];
+}
+
+function paintChangedAssignmentCells(sourceCell, dayKey, changedSlotIndexes) {
+  const memberRow = sourceCell?.closest(".member-row");
+  if (!memberRow || !changedSlotIndexes?.length) return;
+
+  const changedSlots = new Set(changedSlotIndexes);
+  for (const cell of memberRow.querySelectorAll(".slot-cell")) {
+    const slotIndex = Number(cell.dataset.slot);
+    if (
+      cell.dataset.day === dayKey
+      && changedSlots.has(slotIndex)
+      && !cell.classList.contains("lunch")
+      && !cell.classList.contains("monthly-time-off")
+    ) {
+      paintCell(cell, state.assignments[dayKey][cell.dataset.member][slotIndex], slotIndex);
+    }
+  }
 }
 
 function finishLastPaintSync() {
@@ -1439,14 +1653,17 @@ function attachEvents() {
 
   clearMonthBtn?.addEventListener("click", async () => {
     if (!confirm(`Clear all assignments for ${MONTHS[currentMonthIdx].label}?`)) return;
+    const undoAction = createAssignmentUndoAction(`Clear ${MONTHS[currentMonthIdx].label}`);
     const clearedDays = [];
     for (const day of weekdays) {
       if (day.foreign || isHoliday(day.key)) continue;
       for (const member of state.members) {
+        captureAssignmentUndoRow(undoAction, day.key, member);
         state.assignments[day.key][member] = createEmptyAssignmentRow();
       }
       clearedDays.push(day.key);
     }
+    commitAssignmentUndoAction(undoAction);
     renderTable();
     renderTotals();
     const ok = await saveState({
@@ -1622,12 +1839,15 @@ function attachEvents() {
     updateHoverGuides(cell);
     if (!cell || cell.classList.contains("lunch") || cell.classList.contains("foreign") || cell.classList.contains("holiday") || cell.classList.contains("monthly-time-off")) return;
     isMouseDown = true;
+    activePaintUndoAction = createAssignmentUndoAction(
+      paintMode === "erase" ? "Erase schedule" : "Paint schedule"
+    );
     const member = cell.dataset.member;
     activePaintMember = member;
     const dayKey = cell.dataset.day;
     const slotIndex = Number(cell.dataset.slot);
-    applyToCell(member, dayKey, slotIndex);
-    paintCell(cell, state.assignments[dayKey][member][slotIndex], slotIndex);
+    const changedSlotIndexes = applyToCell(member, dayKey, slotIndex);
+    paintChangedAssignmentCells(cell, dayKey, changedSlotIndexes);
     renderTotals();
   });
 
@@ -1640,8 +1860,8 @@ function attachEvents() {
     if (member !== activePaintMember) return;
     const dayKey = cell.dataset.day;
     const slotIndex = Number(cell.dataset.slot);
-    applyToCell(member, dayKey, slotIndex);
-    paintCell(cell, state.assignments[dayKey][member][slotIndex], slotIndex);
+    const changedSlotIndexes = applyToCell(member, dayKey, slotIndex);
+    paintChangedAssignmentCells(cell, dayKey, changedSlotIndexes);
   });
 
   scheduleBody.addEventListener("mouseup", () => {
@@ -1649,6 +1869,8 @@ function attachEvents() {
     const finishedMember = activePaintMember;
     isMouseDown = false;
     activePaintMember = null;
+    commitAssignmentUndoAction(activePaintUndoAction);
+    activePaintUndoAction = null;
     updateRenderedMemberHours(finishedMember);
     renderTotals();
     finishLastPaintSync();
@@ -1659,6 +1881,8 @@ function attachEvents() {
     const finishedMember = activePaintMember;
     isMouseDown = false;
     activePaintMember = null;
+    commitAssignmentUndoAction(activePaintUndoAction);
+    activePaintUndoAction = null;
     updateRenderedMemberHours(finishedMember);
     renderTotals();
     finishLastPaintSync();
@@ -1703,8 +1927,11 @@ function attachEvents() {
     if (!_lunchCtx) return;
     const { member, dayKey, slotIndex } = _lunchCtx;
     _lunchCtx = null;
+    const undoAction = createAssignmentUndoAction("Update Lunch");
+    captureAssignmentUndoRow(undoAction, dayKey, member);
     const isLunchNow = state.assignments[dayKey][member][slotIndex] === "LUNCH";
     state.assignments[dayKey][member][slotIndex] = isLunchNow ? null : "LUNCH";
+    commitAssignmentUndoAction(undoAction);
     renderTable();
     renderTotals();
     const ok = await saveState({
@@ -1716,6 +1943,7 @@ function attachEvents() {
 
   document.addEventListener("click", () => { lunchMenu.style.display = "none"; _lunchCtx = null; });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") { lunchMenu.style.display = "none"; _lunchCtx = null; } });
+  document.addEventListener("keydown", handleUndoShortcut);
   window.addEventListener("resize", () => {
     window.requestAnimationFrame(updateTableSizing);
   });
@@ -1817,6 +2045,7 @@ async function importFromJson(data) {
   }
 
   // Import assignments — only for existing members, only for existing brands
+  const undoAction = createAssignmentUndoAction("Import assignments");
   const importedDays = new Set();
   const changedAssignmentRows = [];
   for (const [dateKey, memberMap] of Object.entries(data.assignments)) {
@@ -1832,6 +2061,7 @@ async function importFromJson(data) {
         const brandId = resolveJsonBrand(val);
         if (!brandId) continue; // no matching brand in app — skip
         if (state.assignments[dateKey][appMember][i] !== brandId) {
+          captureAssignmentUndoRow(undoAction, dateKey, appMember);
           state.assignments[dateKey][appMember][i] = brandId;
           memberChanged = true;
         }
@@ -1843,6 +2073,7 @@ async function importFromJson(data) {
     }
   }
 
+  commitAssignmentUndoAction(undoAction);
   renderPalette();
   renderTable();
   renderTotals();
@@ -2512,6 +2743,33 @@ function configureLunchSlots(memberSlots, startIdx, endExclusiveIdx, dayKey) {
   return configuredSlots;
 }
 
+function applyRecurringAutomaticTimeOff(
+  memberSlots,
+  brandId,
+  startIdx,
+  endExclusiveIdx,
+  dayKey
+) {
+  const timeOffBrand = getTimeOffBrand() || ensureTimeOffBrand(state?.brands);
+  if (
+    !Array.isArray(memberSlots)
+    || !isAutomaticShiftWorkValue(brandId, timeOffBrand?.id)
+  ) {
+    return [];
+  }
+
+  const includesEarlyArrival = Array.from(
+    { length: Math.max(0, endExclusiveIdx - startIdx) },
+    (_, offset) => startIdx + offset
+  ).some((slotIndex) => (
+    isEarlyArrivalSlot(slotIndex) && memberSlots[slotIndex] === brandId
+  ));
+
+  return includesEarlyArrival
+    ? reconcileAutomaticTimeOff(memberSlots, timeOffBrand.id, dayKey)
+    : [];
+}
+
 /* ── Recurring Schedule Modal ── */
 function openRecurringModal() {
   const modal = document.getElementById("recurringModal");
@@ -2744,10 +3002,13 @@ function openRecurringModal() {
       return;
     }
 
+    const undoAction = createAssignmentUndoAction("Apply recurring schedule");
+
     // Apply work hours and, when requested, replace the existing Lunch time.
     for (const dayKey of targetDays) {
       const memberSlots = state.assignments[dayKey]?.[member];
       if (!memberSlots) continue;
+      captureAssignmentUndoRow(undoAction, dayKey, member);
 
       for (let i = startIdx; i < endExclusiveIdx; i += 1) {
         if (isMonthlyTimeOffSlot(dayKey, i)) continue;
@@ -2759,8 +3020,17 @@ function openRecurringModal() {
       if (shouldConfigureLunch) {
         configureLunchSlots(memberSlots, lunchStartIdx, lunchEndExclusiveIdx, dayKey);
       }
+
+      applyRecurringAutomaticTimeOff(
+        memberSlots,
+        brandId,
+        startIdx,
+        endExclusiveIdx,
+        dayKey
+      );
     }
 
+    commitAssignmentUndoAction(undoAction);
     modal.hidden = true;
     renderTable();
     renderTotals();

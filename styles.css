@@ -44,12 +44,12 @@
   --eraser-border: #F3C3CD;
   --eraser-active-bg: #FDECEF;
   --eraser-active-border: #E52D4D;
-  --eraser-color: #E52D4D;
+  --eraser-color: #0D0D0D;
   --time-off-bg: #d9d9d996;
   --time-off-border: #C9DDFD;
   --time-off-active-bg: #d9d9d996;
   --time-off-active-border: #0E75FF;
-  --time-off-color: #4679C6;
+  --time-off-color: #0D0D0D;
   --time-off-active-color: #0E75FF;
 }
 
@@ -298,7 +298,7 @@ body {
   top: 1%;
   z-index: 10;
   background: var(--table-bg);
-  padding: 20px 10px;
+  padding: 6px 0;
 }
 
 button:disabled,

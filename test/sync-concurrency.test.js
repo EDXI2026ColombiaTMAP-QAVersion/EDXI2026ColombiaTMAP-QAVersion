@@ -222,6 +222,88 @@ test("Time Off is available even when it is missing from loaded brands", () => {
   assert.equal(brands.length, 2);
 });
 
+test("early arrivals automatically move Time Off to the matching departure", () => {
+  const storage = createMemoryStorage();
+  const context = vm.createContext({
+    localStorage: storage,
+    window: { localStorage: storage }
+  });
+
+  vm.runInContext(
+    `${APP_SOURCE}
+    ;globalThis.__automaticTimeOffForTests = {
+      reconcile: reconcileAutomaticTimeOff,
+      emptyRow: createEmptyAssignmentRow,
+      slotLabels: slots.map((slot) => slot.label)
+    };`,
+    context,
+    { filename: APP_PATH }
+  );
+
+  const helper = context.__automaticTimeOffForTests;
+  const labels = JSON.parse(JSON.stringify(helper.slotLabels));
+  const indexOf = (label) => labels.indexOf(label);
+
+  const sevenAmRow = helper.emptyRow();
+  sevenAmRow[indexOf("7:00")] = "client";
+  sevenAmRow[indexOf("7:30")] = "client";
+  sevenAmRow[indexOf("16:00")] = "client";
+  helper.reconcile(sevenAmRow, "time-off", "2026-08-03");
+
+  assert.equal(sevenAmRow[indexOf("15:30")], null);
+  assert.equal(sevenAmRow[indexOf("16:00")], "time-off");
+  assert.equal(sevenAmRow[indexOf("16:30")], "time-off");
+  assert.equal(sevenAmRow[indexOf("17:00")], "time-off");
+  assert.equal(sevenAmRow[indexOf("17:30")], "time-off");
+
+  const sevenThirtyRow = helper.emptyRow();
+  sevenThirtyRow[indexOf("7:30")] = "client";
+  helper.reconcile(sevenThirtyRow, "time-off", "2026-08-03");
+
+  assert.equal(sevenThirtyRow[indexOf("16:00")], null);
+  assert.equal(sevenThirtyRow[indexOf("16:30")], "time-off");
+  assert.equal(sevenThirtyRow[indexOf("17:00")], "time-off");
+  assert.equal(sevenThirtyRow[indexOf("17:30")], "time-off");
+});
+
+test("automatic Time Off is recalculated when an early arrival is removed", () => {
+  const storage = createMemoryStorage();
+  const context = vm.createContext({
+    localStorage: storage,
+    window: { localStorage: storage }
+  });
+
+  vm.runInContext(
+    `${APP_SOURCE}
+    ;globalThis.__automaticTimeOffForTests = {
+      reconcile: reconcileAutomaticTimeOff,
+      emptyRow: createEmptyAssignmentRow,
+      slotLabels: slots.map((slot) => slot.label)
+    };`,
+    context,
+    { filename: APP_PATH }
+  );
+
+  const helper = context.__automaticTimeOffForTests;
+  const labels = JSON.parse(JSON.stringify(helper.slotLabels));
+  const indexOf = (label) => labels.indexOf(label);
+  const row = helper.emptyRow();
+  row[indexOf("7:00")] = "client";
+  row[indexOf("7:30")] = "client";
+  helper.reconcile(row, "time-off", "2026-08-03");
+
+  row[indexOf("7:00")] = null;
+  helper.reconcile(row, "time-off", "2026-08-03");
+  assert.equal(row[indexOf("16:00")], null);
+  assert.equal(row[indexOf("16:30")], "time-off");
+
+  row[indexOf("7:30")] = null;
+  helper.reconcile(row, "time-off", "2026-08-03");
+  assert.equal(row[indexOf("16:30")], null);
+  assert.equal(row[indexOf("17:00")], null);
+  assert.equal(row[indexOf("17:30")], null);
+});
+
 test("the last Friday afternoon of every month is blocked as Time Off", () => {
   const storage = createMemoryStorage();
   const context = vm.createContext({
@@ -311,6 +393,135 @@ test("recurring Lunch replaces the previous Lunch time", () => {
   assert.equal(memberSlots[11], "LUNCH");
   assert.equal(memberSlots[12], null);
   assert.equal(memberSlots[13], null);
+});
+
+test("Recurring Schedule applies automatic Time Off for an early shift", () => {
+  const storage = createMemoryStorage();
+  const context = vm.createContext({
+    localStorage: storage,
+    window: { localStorage: storage }
+  });
+
+  vm.runInContext(
+    `${APP_SOURCE}
+    ;(() => {
+      state = {
+        brands: [
+          { id: "brand-1", name: "Client", color: "#123456", billingCode: "123456" },
+          { id: "time-off", name: "Time Off", color: "#d9d9d996", billingCode: "000000" }
+        ]
+      };
+      const row = createEmptyAssignmentRow();
+      const startIdx = slots.findIndex((slot) => slot.label === "7:00");
+      const endExclusiveIdx = slots.findIndex((slot) => slot.label === "9:00");
+      for (let index = startIdx; index < endExclusiveIdx; index += 1) {
+        row[index] = "brand-1";
+      }
+      applyRecurringAutomaticTimeOff(
+        row,
+        "brand-1",
+        startIdx,
+        endExclusiveIdx,
+        "2026-08-03"
+      );
+      globalThis.__recurringEarlyShiftResult = {
+        row,
+        labels: slots.map((slot) => slot.label)
+      };
+    })();`,
+    context,
+    { filename: APP_PATH }
+  );
+
+  const result = JSON.parse(JSON.stringify(context.__recurringEarlyShiftResult));
+  const indexOf = (label) => result.labels.indexOf(label);
+
+  assert.equal(result.row[indexOf("7:00")], "brand-1");
+  assert.equal(result.row[indexOf("8:30")], "brand-1");
+  assert.equal(result.row[indexOf("15:30")], null);
+  assert.equal(result.row[indexOf("16:00")], "time-off");
+  assert.equal(result.row[indexOf("16:30")], "time-off");
+  assert.equal(result.row[indexOf("17:00")], "time-off");
+  assert.equal(result.row[indexOf("17:30")], "time-off");
+});
+
+test("Ctrl+Z restores a complete schedule gesture without intercepting text fields", () => {
+  const storage = createMemoryStorage();
+  const context = vm.createContext({
+    localStorage: storage,
+    window: { localStorage: storage },
+    Promise
+  });
+
+  vm.runInContext(
+    `${APP_SOURCE}
+    ;(() => {
+      const originalRow = Array(slots.length).fill(null);
+      state = {
+        members: ["Ana"],
+        brands: [{ id: "brand-1", name: "Client", color: "#123456" }],
+        assignments: { "2026-08-03": { Ana: [...originalRow] } },
+        memberDetails: {}
+      };
+
+      const action = createAssignmentUndoAction("Paint schedule");
+      captureAssignmentUndoRow(action, "2026-08-03", "Ana");
+      state.assignments["2026-08-03"].Ana[2] = "brand-1";
+      captureAssignmentUndoRow(action, "2026-08-03", "Ana");
+      state.assignments["2026-08-03"].Ana[3] = "brand-1";
+      commitAssignmentUndoAction(action);
+
+      renderTable = () => {};
+      renderTotals = () => {};
+      showToast = () => {};
+      saveState = (changes) => {
+        globalThis.__savedUndoRows = changes.assignmentRows;
+        return Promise.resolve(true);
+      };
+
+      let textPrevented = false;
+      handleUndoShortcut({
+        key: "z",
+        ctrlKey: true,
+        metaKey: false,
+        altKey: false,
+        shiftKey: false,
+        target: { closest: () => ({ tagName: "INPUT" }) },
+        preventDefault: () => { textPrevented = true; }
+      });
+
+      const historyAfterTextShortcut = undoHistory.length;
+      let schedulePrevented = false;
+      handleUndoShortcut({
+        key: "z",
+        ctrlKey: true,
+        metaKey: false,
+        altKey: false,
+        shiftKey: false,
+        target: { closest: () => null },
+        preventDefault: () => { schedulePrevented = true; }
+      });
+
+      globalThis.__undoResult = {
+        textPrevented,
+        historyAfterTextShortcut,
+        schedulePrevented,
+        historyAfterScheduleShortcut: undoHistory.length,
+        row: state.assignments["2026-08-03"].Ana,
+        savedRows: globalThis.__savedUndoRows
+      };
+    })();`,
+    context,
+    { filename: APP_PATH }
+  );
+
+  const result = JSON.parse(JSON.stringify(context.__undoResult));
+  assert.equal(result.textPrevented, false);
+  assert.equal(result.historyAfterTextShortcut, 1);
+  assert.equal(result.schedulePrevented, true);
+  assert.equal(result.historyAfterScheduleShortcut, 0);
+  assert.deepEqual(result.row, Array(22).fill(null));
+  assert.deepEqual(result.savedRows, [{ workDate: "2026-08-03", member: "Ana" }]);
 });
 
 function clone(value) {
