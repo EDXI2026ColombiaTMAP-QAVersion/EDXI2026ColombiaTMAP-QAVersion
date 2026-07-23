@@ -244,7 +244,7 @@ test("Time Off always uses the configured translucent gray", () => {
       color: "#F0F2F1",
       billingCode: "000000"
     }).color,
-    "#d9d9d9"
+    "#e8e8e8"
   );
 });
 
@@ -267,7 +267,7 @@ test("Time Off is available even when it is missing from loaded brands", () => {
 
   assert.equal(timeOffBrand.id, "time-off");
   assert.equal(timeOffBrand.billingCode, "000000");
-  assert.equal(timeOffBrand.color, "#d9d9d9");
+  assert.equal(timeOffBrand.color, "#e8e8e8");
   assert.equal(sameTimeOffBrand.id, timeOffBrand.id);
   assert.equal(brands.length, 2);
 });
@@ -458,7 +458,7 @@ test("Recurring Schedule applies automatic Time Off for an early shift", () => {
       state = {
         brands: [
           { id: "brand-1", name: "Client", color: "#123456", billingCode: "123456" },
-          { id: "time-off", name: "Time Off", color: "#d9d9d9", billingCode: "000000" }
+          { id: "time-off", name: "Time Off", color: "#e8e8e8", billingCode: "000000" }
         ]
       };
       const row = createEmptyAssignmentRow();
@@ -745,7 +745,7 @@ test("a referenced local Time Off brand is saved before its assignment", async (
   state.brands.push({
     id: "time-off",
     name: "Time Off",
-    color: "#d9d9d9",
+    color: "#e8e8e8",
     billingCode: "000000"
   });
   state.assignments["2026-07-16"].Ana[0] = "time-off";
@@ -757,7 +757,7 @@ test("a referenced local Time Off brand is saved before its assignment", async (
   assert.ok(fake.database.brands.some((brand) => (
     brand.id === "time-off"
       && brand.active
-      && brand.color === "#d9d9d9"
+      && brand.color === "#e8e8e8"
   )));
   assert.equal(
     fake.database.assignments.get("2026-07-16|member-ana").slots[0],
